@@ -31,6 +31,7 @@ OPS = [
     "add_skip",        # Add a skip connection between two nodes
     "widen",           # Increase channels of a random conv
     "narrow",          # Decrease channels of a random conv
+    "prune",           # Remove a non-essential node
 ]
 
 
@@ -202,6 +203,28 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGr
         idx = g.channel_options.index(current) if current in g.channel_options else 1
         new_idx = max(0, idx - 1)
         g.nodes[node]["hyperparams"]["out_channels"] = g.channel_options[new_idx]
+
+    elif op == "prune":
+        # Remove a non-essential node (not input/output, has exactly 1 in + 1 out).
+        # Reconnect its parent to its child to maintain the path.
+        removable = []
+        for nid in g.nodes:
+            if nid in (g.input_id, g.output_id):
+                continue
+            in_edges = [(u, v) for (u, v) in g.edges if v == nid]
+            out_edges = [(u, v) for (u, v) in g.edges if u == nid]
+            if len(in_edges) == 1 and len(out_edges) == 1:
+                removable.append(nid)
+        if removable:
+            node_to_remove = rng.choice(removable)
+            in_edge = [(u, v) for (u, v) in g.edges if v == node_to_remove][0]
+            out_edge = [(u, v) for (u, v) in g.edges if u == node_to_remove][0]
+            # Reconnect parent -> child
+            new_edges = [(u, v) for (u, v) in g.edges
+                         if u != node_to_remove and v != node_to_remove]
+            new_edges.append((in_edge[0], out_edge[1]))
+            g.edges = new_edges
+            del g.nodes[node_to_remove]
 
     return g
 
