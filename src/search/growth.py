@@ -97,8 +97,30 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random,
     If the operation would exceed max_params, it's skipped (returns original).
     """
     g = graph.clone()
+    # Spatial nodes = nodes that are NOT input/output/pool/head, AND are
+    # upstream of the global_avg_pool (i.e., in the spatial feature extractor).
+    # This prevents inserting conv/pool/bn after the linear head.
+    output_pool_id = None
+    head_id = None
+    for nid, n in g.nodes.items():
+        if n["primitive"] == "global_avg_pool":
+            output_pool_id = nid
+        if n["primitive"] == "linear_head":
+            head_id = nid
+    # Compute ancestors of the pool (these are the valid insertion points)
+    import networkx as nx
+    nx_g = nx.DiGraph()
+    for nid in g.nodes:
+        nx_g.add_node(nid)
+    for (u, v) in g.edges:
+        nx_g.add_edge(u, v)
+    if output_pool_id is not None and nx_g.has_node(output_pool_id):
+        valid_parents = set(nx.ancestors(nx_g, output_pool_id))
+    else:
+        valid_parents = set(g.nodes.keys()) - {head_id} if head_id else set(g.nodes.keys())
     spatial_nodes = [nid for nid, n in g.nodes.items()
-                     if n["primitive"] not in ("identity", "linear_head", "global_avg_pool")]
+                     if n["primitive"] not in ("identity", "linear_head", "global_avg_pool")
+                     and nid in valid_parents]
     conv_nodes = [nid for nid, n in g.nodes.items() if n["primitive"] in ("conv_bn_relu", "dw_sep_conv")]
     all_nodes = list(g.nodes.keys())
 
