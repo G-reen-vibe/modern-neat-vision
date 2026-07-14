@@ -18,7 +18,22 @@ import torch.nn as nn
 from typing import Dict, List, Optional, Tuple
 
 from src.models.dneat.developmental import Phenotype, PhenotypeNode
-from src.models.dneat.primitives import PRIMITIVES, TYPE_SPATIAL, TYPE_VECTOR
+from src.models.dneat.primitives import PRIMITIVES, TYPE_SPATIAL, TYPE_VECTOR, PrimitiveSpec
+
+
+def _build_spec_with_hyperparams(template: PrimitiveSpec, hyperparams: dict) -> PrimitiveSpec:
+    """Construct a fresh PrimitiveSpec instance with the given hyperparameters.
+
+    The registry stores instances with default hyperparameters. We need to
+    reconstruct with the node-specific hyperparameters so that build() uses
+    the correct values.
+    """
+    cls = template.__class__
+    try:
+        return cls(**hyperparams)
+    except TypeError:
+        # Some primitives (Identity, GlobalAvgPool, LinearHead) take no args
+        return cls()
 
 
 class _Flatten(nn.Module):
@@ -80,6 +95,7 @@ class DNeatPhenotype(nn.Module):
         self.modules_dict = nn.ModuleDict()
         self.merge_modules = nn.ModuleDict()  # node_id -> Merge module
         self.flatten_flags: Dict[int, bool] = {}
+        self.node_specs: Dict[int, PrimitiveSpec] = {}  # per-node spec
         self.topo_order: List[int] = []
         self.edges: List[Tuple[int, int]] = list(phenotype.edges)
         self.in_channels = in_channels
@@ -98,7 +114,13 @@ class DNeatPhenotype(nn.Module):
 
         for nid in self.topo_order:
             pnode = phenotype.nodes[nid]
-            spec = PRIMITIVES[pnode.primitive_name]
+            # Get the spec class from the registry, then construct a fresh
+            # instance with the node's hyperparameters. The registry instance
+            # has default hyperparameters that we must NOT use.
+            spec_template = PRIMITIVES[pnode.primitive_name]
+            # Reconstruct with the node's hyperparameters
+            spec = _build_spec_with_hyperparams(spec_template, pnode.hyperparameters)
+            self.node_specs[nid] = spec
             in_edges = [(u, v) for (u, v) in self.edges if v == nid]
             if not in_edges:
                 in_ch = in_channels
@@ -149,8 +171,7 @@ class DNeatPhenotype(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         outputs: Dict[int, torch.Tensor] = {}
         for nid in self.topo_order:
-            pnode = self.phenotype.nodes[nid]
-            spec = PRIMITIVES[pnode.primitive_name]
+            spec = self.node_specs[nid]
             in_edges = [(u, v) for (u, v) in self.edges if v == nid]
             if not in_edges:
                 outputs[nid] = self.modules_dict[str(nid)](x)

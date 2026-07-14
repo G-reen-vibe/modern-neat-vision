@@ -88,16 +88,13 @@ class Cell:
 
 @dataclass
 class DevelopmentalConfig:
-    grid_resolution: int = 4  # 4x4 grid of possible positions
-    max_steps: int = 4
+    grid_resolution: int = 3  # 3x3 grid of possible positions
+    max_steps: int = 3
     divide_threshold: float = 0.5
-    connect_radius: float = 1.2  # in [-1, 1] coordinate space — large enough to span the grid
+    connect_radius: float = 1.5  # in [-1, 1] coordinate space — large enough to span the grid
     min_cells: int = 3
-    max_cells: int = 16
+    max_cells: int = 8
     # Primitive vocabulary the CPPN can choose from (excluding input/output).
-    # Note: "identity" is excluded from daughter-cell choices because it produces
-    # useless pass-through nodes. Skip connections are formed by the proximity
-    # edge rule, not by instantiating identity primitives.
     primitive_choices: List[str] = field(default_factory=lambda: [
         "conv_bn_relu", "dw_sep_conv", "global_avg_pool",
     ])
@@ -105,6 +102,12 @@ class DevelopmentalConfig:
     # The output region: cells within this distance of (1, 0) get connected to
     # the global_avg_pool output cell, ensuring all cells can reach the output.
     output_attraction_radius: float = 1.5
+    # Cap on proximity-based edges per cell. Without this, dense grids produce
+    # O(N^2) edges, which makes the phenotype's forward pass very slow due to
+    # many merge modules with their own conv adapters.
+    max_proximity_edges_per_cell: int = 2
+    # Default out_channels for conv primitives. Smaller = faster.
+    default_conv_channels: int = 32
 
 
 def _grid_positions(resolution: int) -> List[Tuple[float, float]]:
@@ -157,7 +160,7 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
     seed_cell = Cell(
         cell_id=next_cell_id, position=(0.0, 0.0),
         primitive_name="conv_bn_relu",
-        hyperparameters={"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
+        hyperparameters={"out_channels": config.default_conv_channels, "kernel_size": 3, "stride": 1, "groups": 1},
         parent_id=0, born_at_step=0,
     )
     cells.append(seed_cell)
@@ -212,7 +215,7 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
                     new_pos = candidates[0][0]
                     occupied.add(new_pos)
                     # Differentiate
-                    hyperparams = _default_hyperparams(prim_name)
+                    hyperparams = _default_hyperparams(prim_name, config.default_conv_channels)
                     daughter = Cell(
                         cell_id=next_cell_id, position=new_pos,
                         primitive_name=prim_name, hyperparameters=hyperparams,
@@ -242,29 +245,44 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
 
     # Build edges: connect cells based on proximity and parent relationships
     edges: List[Tuple[int, int]] = []
-    # Parent-child edges (developmental lineage)
+    # Parent-child edges (developmental lineage) — these are always kept.
     for c in cells:
         if c.parent_id is not None:
             edges.append((c.parent_id, c.cell_id))
-    # Proximity-based edges (within connect_radius, not already connected)
+    # Proximity-based edges (within connect_radius, not already connected).
+    # We cap the number of proximity edges per cell to avoid O(N^2) edge
+    # density, which makes the phenotype's forward pass very slow.
     cell_by_id = {c.cell_id: c for c in cells}
     existing = set(edges)
+    # Collect proximity candidates per cell, sorted by distance.
+    proximity_candidates: dict[int, list[tuple[float, int]]] = {c.cell_id: [] for c in cells}
     for i, c1 in enumerate(cells):
         for c2 in cells[i+1:]:
             if (c1.cell_id, c2.cell_id) in existing or (c2.cell_id, c1.cell_id) in existing:
                 continue
-            # Don't let identity or linear_head form spurious edges
             if c2.primitive_name == "identity":
                 continue
             if c1.primitive_name == "linear_head":
                 continue
             dist = math.sqrt((c1.position[0]-c2.position[0])**2 + (c1.position[1]-c2.position[1])**2)
             if dist <= config.connect_radius:
-                # Direction: leftmost → rightmost (by x coord)
-                if c1.position[0] <= c2.position[0]:
-                    edges.append((c1.cell_id, c2.cell_id))
-                else:
-                    edges.append((c2.cell_id, c1.cell_id))
+                proximity_candidates[c1.cell_id].append((dist, c2.cell_id))
+                proximity_candidates[c2.cell_id].append((dist, c1.cell_id))
+    # For each cell, add up to max_proximity_edges_per_cell edges, nearest first.
+    added = set()
+    for cid, cands in proximity_candidates.items():
+        cands.sort()
+        for dist, other_id in cands[:config.max_proximity_edges_per_cell]:
+            c1 = cell_by_id[cid]
+            c2 = cell_by_id[other_id]
+            # Direction: leftmost → rightmost (by x coord)
+            if c1.position[0] <= c2.position[0]:
+                e = (c1.cell_id, c2.cell_id)
+            else:
+                e = (c2.cell_id, c1.cell_id)
+            if e not in added and (e[1], e[0]) not in added:
+                edges.append(e)
+                added.add(e)
 
     # Ensure the output cell (global_avg_pool) connects to cells near it.
     # This guarantees the phenotype has a path from input to output.
@@ -346,11 +364,11 @@ def _prune_to_io_paths(p: Phenotype) -> Phenotype:
     return new
 
 
-def _default_hyperparams(name: str) -> dict:
+def _default_hyperparams(name: str, channels: int = 32) -> dict:
     if name == "conv_bn_relu":
-        return {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1}
+        return {"out_channels": channels, "kernel_size": 3, "stride": 1, "groups": 1}
     if name == "dw_sep_conv":
-        return {"out_channels": 64, "stride": 1}
+        return {"out_channels": channels, "stride": 1}
     return {}
 
 
