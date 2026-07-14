@@ -178,6 +178,15 @@ def main():
     print(f"\nSearch time: {time.time()-t0:.0f}s")
     print(f"Best accuracy during search: {best_acc:.4f} ({len(best_graph.nodes)} nodes)")
 
+    # Save the best graph
+    import json
+    from src.search.growth import graph_to_dict
+    save_path = Path("results/best_graph.json")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, "w") as f:
+        json.dump(graph_to_dict(best_graph), f, indent=2)
+    print(f"Saved best graph to {save_path}")
+
     # Finetune the best graph with more epochs
     print("\n=== Finetuning best graph (5 epochs) ===")
     finetune_acc, finetune_params, finetune_time, _ = evaluate_graph(

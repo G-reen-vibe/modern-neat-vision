@@ -313,6 +313,28 @@ def graph_to_phenotype(g: GrowthGraph) -> Phenotype:
     return p
 
 
+def graph_to_dict(g: GrowthGraph) -> dict:
+    """Serialize a GrowthGraph to a dict (JSON-compatible)."""
+    return {
+        "nodes": {str(k): v for k, v in g.nodes.items()},
+        "edges": [list(e) for e in g.edges],
+        "input_id": g.input_id,
+        "output_id": g.output_id,
+        "next_id": g.next_id,
+    }
+
+
+def graph_from_dict(d: dict) -> GrowthGraph:
+    """Deserialize a GrowthGraph from a dict."""
+    g = GrowthGraph()
+    g.nodes = {int(k): v for k, v in d["nodes"].items()}
+    g.edges = [tuple(e) for e in d["edges"]]
+    g.input_id = d["input_id"]
+    g.output_id = d["output_id"]
+    g.next_id = d["next_id"]
+    return g
+
+
 def graph_hash(g: GrowthGraph) -> str:
     """A hash of the graph's structure (nodes + edges). Useful for dedup."""
     node_strs = []
