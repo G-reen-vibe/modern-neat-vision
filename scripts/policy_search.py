@@ -33,24 +33,34 @@ from src.train.trainer import Trainer
 
 
 def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs=2,
-                   cache=None):
-    """Evaluate a graph. Returns (accuracy, param_count, time_s).
+                   cache=None, pretrained_weights=None):
+    """Evaluate a graph. Returns (accuracy, param_count, time_s, model_state).
 
-    If cache is provided (a dict mapping graph_hash -> (acc, params)),
-    skip evaluation for graphs we've already seen.
+    If pretrained_weights is provided (a dict of state_dict from a parent graph),
+    try to copy matching weights into the new model before training.
     """
     t0 = time.time()
     gh = graph_hash(graph)
     if cache is not None and gh in cache:
         acc, params = cache[gh]
-        return acc, params, 0.0
+        return acc, params, 0.0, None
     p = graph_to_phenotype(graph)
     if p is None or not p.is_valid():
-        return 0.0, 0, time.time() - t0
+        return 0.0, 0, time.time() - t0, None
     try:
         model = compile_phenotype(p, in_channels=in_channels, num_classes=num_classes, image_size=image_size)
         x = torch.randn(2, in_channels, image_size, image_size)
         model(x)
+        # Transfer matching weights from pretrained model
+        if pretrained_weights is not None:
+            model_state = model.state_dict()
+            transferred = 0
+            for k, v in pretrained_weights.items():
+                if k in model_state and model_state[k].shape == v.shape:
+                    model_state[k] = v
+                    transferred += 1
+            if transferred > 0:
+                model.load_state_dict(model_state)
         params = sum(pp.numel() for pp in model.parameters())
         trainer = Trainer(model=model, train_loader=train_loader, val_loader=val_loader,
                           num_classes=num_classes, lr=1e-3, weight_decay=5e-4,
@@ -60,9 +70,9 @@ def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, im
         acc = result["best_acc"]
         if cache is not None:
             cache[gh] = (acc, params)
-        return acc, params, time.time() - t0
+        return acc, params, time.time() - t0, model.state_dict()
     except Exception:
-        return 0.0, 0, time.time() - t0
+        return 0.0, 0, time.time() - t0, None
 
 
 def policy_search(train_loader, val_loader, num_classes, in_channels, image_size,
@@ -84,7 +94,7 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
 
     for ep in range(n_episodes):
         current = initial_graph()
-        cur_acc, cur_params, _ = evaluate_graph(
+        cur_acc, cur_params, _, cur_state = evaluate_graph(
             current, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval, eval_cache
         )
         if verbose:
@@ -106,6 +116,7 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
             best_acc = cur_acc
             best_params = cur_params
             best_op_idx = None
+            best_state = cur_state
             seen_hashes = set()
             for op_idx, op_name in candidates:
                 new_graph = apply_operation(current, OPS[op_idx], rng)
@@ -113,8 +124,8 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
                 if gh in seen_hashes:
                     continue  # skip duplicate
                 seen_hashes.add(gh)
-                new_acc, new_params, t = evaluate_graph(
-                    new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval, eval_cache
+                new_acc, new_params, t, new_state = evaluate_graph(
+                    new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval, eval_cache, cur_state
                 )
                 reward = new_acc - cur_acc
                 trainer.store(features, op_idx, reward)
@@ -125,11 +136,13 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
                     best_candidate = new_graph
                     best_params = new_params
                     best_op_idx = op_idx
+                    best_state = new_state
 
             if best_candidate is not None:
                 current = best_candidate
                 cur_acc = best_acc
                 cur_params = best_params
+                cur_state = best_state
                 if verbose:
                     print(f"  Step {step}: ACCEPTED {OPS[best_op_idx]} -> acc={cur_acc:.4f}")
             else:
@@ -167,7 +180,7 @@ def main():
 
     # Finetune the best graph with more epochs
     print("\n=== Finetuning best graph (5 epochs) ===")
-    finetune_acc, finetune_params, finetune_time = evaluate_graph(
+    finetune_acc, finetune_params, finetune_time, _ = evaluate_graph(
         best_graph, tl, vl, nc, spec.in_channels, spec.image_size, epochs=5, cache=None
     )
     print(f"Finetuned accuracy: {finetune_acc:.4f} (params={finetune_params}, time={finetune_time:.0f}s)")
