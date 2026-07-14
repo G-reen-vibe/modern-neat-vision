@@ -54,8 +54,14 @@ def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, im
 
 def policy_search(train_loader, val_loader, num_classes, in_channels, image_size,
                   n_episodes: int = 2, steps_per_episode: int = 4,
-                  epochs_per_eval: int = 2, seed: int = 0, verbose: bool = True):
-    """Run greedy complexification with a learned policy."""
+                  epochs_per_eval: int = 2, candidates_per_step: int = 3,
+                  seed: int = 0, verbose: bool = True):
+    """Run greedy complexification with a learned policy.
+
+    At each step, the policy samples K candidate operations. Each is evaluated.
+    The best is kept (if it improves). All K transitions are stored with
+    reward = candidate_acc - current_acc (so bad candidates get negative reward).
+    """
     rng = random.Random(seed)
     torch.manual_seed(seed)
     trainer = PolicyTrainer(lr=1e-3)
@@ -72,25 +78,44 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
             print(f"  Step 0: initial acc={cur_acc:.4f} params={cur_params}")
 
         for step in range(1, steps_per_episode + 1):
-            # Policy selects an operation
-            op_idx, op_name, features = trainer.select_op(current)
-            # Apply and evaluate
-            new_graph = apply_operation(current, OPS[op_idx], rng)
-            new_acc, new_params, t = evaluate_graph(
-                new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
-            )
-            # Reward = improvement
-            reward = new_acc - cur_acc
-            trainer.store(features, op_idx, reward)
+            features = graph_features(current)
+            # Sample K candidates from the policy
+            candidates = []
+            for _ in range(candidates_per_step):
+                op_idx, op_name = trainer.select_op(current)[:2]
+                candidates.append((op_idx, op_name))
+            # Also add a random op for exploration
+            random_op_idx = rng.randint(0, len(OPS) - 1)
+            candidates.append((random_op_idx, OPS[random_op_idx]))
 
-            if verbose:
-                print(f"  Step {step}: policy chose {op_name} -> acc={new_acc:.4f} (reward={reward:+.4f}) ({t:.0f}s)")
+            best_candidate = None
+            best_acc = cur_acc
+            best_params = cur_params
+            best_op_idx = None
+            for op_idx, op_name in candidates:
+                new_graph = apply_operation(current, OPS[op_idx], rng)
+                new_acc, new_params, t = evaluate_graph(
+                    new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
+                )
+                reward = new_acc - cur_acc
+                trainer.store(features, op_idx, reward)
+                if verbose:
+                    print(f"  Step {step} candidate ({op_name}): acc={new_acc:.4f} (reward={reward:+.4f}) ({t:.0f}s)")
+                if new_acc > best_acc:
+                    best_acc = new_acc
+                    best_candidate = new_graph
+                    best_params = new_params
+                    best_op_idx = op_idx
 
-            # Accept if improved (greedy)
-            if new_acc > cur_acc:
-                current = new_graph
-                cur_acc = new_acc
-                cur_params = new_params
+            if best_candidate is not None:
+                current = best_candidate
+                cur_acc = best_acc
+                cur_params = best_params
+                if verbose:
+                    print(f"  Step {step}: ACCEPTED {OPS[best_op_idx]} -> acc={cur_acc:.4f}")
+            else:
+                if verbose:
+                    print(f"  Step {step}: no improvement (acc={cur_acc:.4f})")
 
             if cur_acc > best_acc_ever:
                 best_acc_ever = cur_acc
