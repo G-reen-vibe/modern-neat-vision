@@ -180,26 +180,27 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
             if config.noise_sigma > 0:
                 outputs = [o + rng.gauss(0, config.noise_sigma) for o in outputs]
             divide_prob = 1.0 / (1.0 + math.exp(-outputs[0]))  # sigmoid
-            # Differentiation: use both the CPPN diff output AND the cell's
-            # x-position (depth from input). Cells farther from input are more
-            # likely to be pooling/primitive-reducing, which matches the natural
-            # depth-wise structure of CNNs (early layers = feature extraction,
-            # late layers = pooling).
+            # Differentiation: PRIMARILY driven by CPPN output (80%),
+            # with a small position bias (20%) to encourage depth-wise structure.
             diff_val = outputs[1]
             diff_norm = (math.tanh(diff_val) + 1) / 2  # [0, 1]
-            # Blend with position: x in [-1, 1], normalize to [0, 1]
             x_norm = (x + 1) / 2
-            # Weighted combination: 50% CPPN, 50% position
-            choice_val = 0.5 * diff_norm + 0.5 * x_norm
+            choice_val = 0.8 * diff_norm + 0.2 * x_norm
             n_choices = len(config.primitive_choices)
+            # Add stochastic noise to choice_val so daughter cells don't all
+            # differentiate identically. The noise is seeded by the developmental
+            # seed, so development is reproducible for a given (genome, seed).
+            choice_val = choice_val + rng.uniform(-0.15, 0.15)
+            choice_val = max(0.0, min(0.999, choice_val))
             prim_idx = min(n_choices - 1, int(choice_val * n_choices))
             prim_name = config.primitive_choices[prim_idx]
-            # Channel count: scale with depth (x position). Cells farther from
-            # input get more channels — matches typical CNN design where deeper
-            # layers have more channels but smaller spatial resolution.
-            # Base channels * (1 + depth_factor * 2)
-            depth_factor = max(0.0, x_norm)  # 0 at input, 1 at output
-            n_channels = max(8, int(config.default_conv_channels * (1.0 + depth_factor * 1.5)))
+            # Channel count: use the CPPN's connect output (3rd output) to
+            # determine channel scaling. This makes channel count evolvable.
+            connect_val = outputs[2] if len(outputs) > 2 else 0.0
+            connect_norm = (math.tanh(connect_val) + 1) / 2  # [0, 1]
+            # Add noise to channel count too
+            connect_norm = max(0.0, min(1.0, connect_norm + rng.uniform(-0.1, 0.1)))
+            n_channels = max(8, int(config.default_conv_channels * (0.5 + connect_norm * 2.5)))
 
             # Decide division
             if (divide_prob > config.divide_threshold

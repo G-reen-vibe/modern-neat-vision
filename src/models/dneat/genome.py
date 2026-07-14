@@ -161,16 +161,16 @@ def random_genome(seed: int | None = None) -> Genome:
         for h in hidden_ids:
             if rng.random() < 0.8:
                 g.connect(inp, h, weight=rng.gauss(0, 1.0))
-    # Connect hidden to outputs
+    # Connect hidden to outputs — use LARGER weights so outputs vary more
     for h in hidden_ids:
         for out in (o_divide, o_diff, o_conn):
             if rng.random() < 0.8:
-                g.connect(h, out, weight=rng.gauss(0, 1.0))
+                g.connect(h, out, weight=rng.gauss(0, 2.0))  # larger std
     # Also allow direct input -> output connections
     for inp in (x, y, t, bias):
         for out in (o_divide, o_diff, o_conn):
             if rng.random() < 0.3:
-                g.connect(inp, out, weight=rng.gauss(0, 0.5))
+                g.connect(inp, out, weight=rng.gauss(0, 1.0))
     g.input_ids = [x, y, t, bias]
     g.output_ids = [o_divide, o_diff, o_conn]
     return g
