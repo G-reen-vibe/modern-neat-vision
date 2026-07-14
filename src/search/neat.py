@@ -174,10 +174,20 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
     rng = random.Random(seed)
     seed_everything(seed)
 
-    # Initialize population
+    # Initialize population — all start from the SAME minimal genome.
+    # This is true NEAT complexification: the search begins with the simplest
+    # possible CPPN and adds structure through mutations. Diversity comes from
+    # different mutation trajectories, not different initial genomes.
     population: List[Individual] = []
     for i in range(config.population_size):
-        g = random_genome(seed=rng.randint(0, 10000))
+        g = minimal_genome()
+        # Apply a few random mutations to create initial diversity
+        for _ in range(rng.randint(1, 3)):
+            if rng.random() < 0.5:
+                g.mutate_add_node()
+            else:
+                g.mutate_add_edge()
+            g.mutate_perturb_weights(sigma=0.5)
         ind = Individual(id=i, genome=g)
         population.append(ind)
 

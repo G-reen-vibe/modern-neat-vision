@@ -37,10 +37,10 @@ def main():
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     config = DNeatConfig(
-        population_size=3,
-        generations=2,
+        population_size=4,
+        generations=3,
         inner_train_epochs=2,
-        stability_weight=0.5,
+        stability_weight=0.3,
         train_subset_size=3000,
         val_subset_size=1000,
         batch_size=64,
