@@ -49,18 +49,26 @@ class GrowthGraph:
 
 
 def initial_graph() -> GrowthGraph:
-    """Create the minimal starting graph: input -> conv -> pool -> head."""
+    """Create the minimal starting graph: input -> conv -> bn_relu -> pool -> head.
+
+    Slightly stronger than the bare minimum: 2 conv layers + BN to give the
+    search a reasonable starting point.
+    """
     g = GrowthGraph()
     g.nodes[0] = {"primitive": "identity", "hyperparams": {}, "position": (-1, 0)}
     g.nodes[1] = {"primitive": "conv_bn_relu",
-                  "hyperparams": {"out_channels": 16, "kernel_size": 3, "stride": 1, "groups": 1},
-                  "position": (0, 0)}
-    g.nodes[2] = {"primitive": "global_avg_pool", "hyperparams": {}, "position": (1, 0)}
-    g.nodes[3] = {"primitive": "linear_head", "hyperparams": {}, "position": (2, 0)}
-    g.edges = [(0, 1), (1, 2), (2, 3)]
+                  "hyperparams": {"out_channels": 32, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "position": (-0.5, 0)}
+    g.nodes[2] = {"primitive": "bn_relu", "hyperparams": {}, "position": (0, 0)}
+    g.nodes[3] = {"primitive": "conv_bn_relu",
+                  "hyperparams": {"out_channels": 32, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "position": (0.5, 0)}
+    g.nodes[4] = {"primitive": "global_avg_pool", "hyperparams": {}, "position": (1, 0)}
+    g.nodes[5] = {"primitive": "linear_head", "hyperparams": {}, "position": (1.5, 0)}
+    g.edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
     g.input_id = 0
-    g.output_id = 3
-    g.next_id = 4
+    g.output_id = 5
+    g.next_id = 6
     return g
 
 
