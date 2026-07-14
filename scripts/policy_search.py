@@ -1,0 +1,126 @@
+"""Greedy complexification with learned policy (REINFORCE).
+
+At each step:
+  1. Policy selects an operation based on current graph features
+  2. Apply the operation, evaluate the candidate
+  3. Reward = accuracy improvement (candidate_acc - current_acc)
+  4. Store transition for policy training
+  5. Accept candidate if it improves accuracy
+
+After each episode, train the policy with REINFORCE.
+"""
+from __future__ import annotations
+import sys
+import time
+import random
+from pathlib import Path
+from typing import List, Tuple
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import torch
+from torch.utils.data import Subset, DataLoader
+
+from src.data.datasets import get_datasets, get_spec
+from src.search.growth import (
+    initial_graph, apply_operation, graph_to_phenotype,
+    graph_features, OPS, GrowthGraph,
+)
+from src.search.policy import PolicyTrainer
+from src.models.dneat.phenotype import compile_phenotype
+from src.train.trainer import Trainer
+
+
+def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs=2):
+    t0 = time.time()
+    p = graph_to_phenotype(graph)
+    if p is None or not p.is_valid():
+        return 0.0, 0, time.time() - t0
+    try:
+        model = compile_phenotype(p, in_channels=in_channels, num_classes=num_classes, image_size=image_size)
+        x = torch.randn(2, in_channels, image_size, image_size)
+        model(x)
+        params = sum(pp.numel() for pp in model.parameters())
+        trainer = Trainer(model=model, train_loader=train_loader, val_loader=val_loader,
+                          num_classes=num_classes, lr=1e-3, weight_decay=5e-4,
+                          warmup_epochs=1, total_epochs=epochs, label_smoothing=0.1,
+                          grad_clip=1.0, device="cpu")
+        result = trainer.fit(epochs, logger=None, eval_every=1)
+        return result["best_acc"], params, time.time() - t0
+    except Exception:
+        return 0.0, 0, time.time() - t0
+
+
+def policy_search(train_loader, val_loader, num_classes, in_channels, image_size,
+                  n_episodes: int = 2, steps_per_episode: int = 4,
+                  epochs_per_eval: int = 2, seed: int = 0, verbose: bool = True):
+    """Run greedy complexification with a learned policy."""
+    rng = random.Random(seed)
+    torch.manual_seed(seed)
+    trainer = PolicyTrainer(lr=1e-3)
+    best_graph_ever = None
+    best_acc_ever = 0.0
+
+    for ep in range(n_episodes):
+        current = initial_graph()
+        cur_acc, cur_params, _ = evaluate_graph(
+            current, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
+        )
+        if verbose:
+            print(f"\n--- Episode {ep+1}/{n_episodes} ---")
+            print(f"  Step 0: initial acc={cur_acc:.4f} params={cur_params}")
+
+        for step in range(1, steps_per_episode + 1):
+            # Policy selects an operation
+            op_idx, op_name, features = trainer.select_op(current)
+            # Apply and evaluate
+            new_graph = apply_operation(current, OPS[op_idx], rng)
+            new_acc, new_params, t = evaluate_graph(
+                new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
+            )
+            # Reward = improvement
+            reward = new_acc - cur_acc
+            trainer.store(features, op_idx, reward)
+
+            if verbose:
+                print(f"  Step {step}: policy chose {op_name} -> acc={new_acc:.4f} (reward={reward:+.4f}) ({t:.0f}s)")
+
+            # Accept if improved (greedy)
+            if new_acc > cur_acc:
+                current = new_graph
+                cur_acc = new_acc
+                cur_params = new_params
+
+            if cur_acc > best_acc_ever:
+                best_acc_ever = cur_acc
+                best_graph_ever = current.clone()
+
+        # Train policy after each episode
+        update_result = trainer.update()
+        if verbose:
+            print(f"  Policy update: {update_result}")
+
+    return best_graph_ever, best_acc_ever
+
+
+def main():
+    print("=== Greedy Complexification with Learned Policy ===")
+    train, val, nc = get_datasets("fashionmnist")
+    train_sub = Subset(train, list(range(3000)))
+    val_sub = Subset(val, list(range(1000)))
+    tl = DataLoader(train_sub, batch_size=64, shuffle=True, drop_last=True)
+    vl = DataLoader(val_sub, batch_size=64, shuffle=False)
+    spec = get_spec("fashionmnist")
+
+    t0 = time.time()
+    best_graph, best_acc = policy_search(
+        tl, vl, nc, spec.in_channels, spec.image_size,
+        n_episodes=2, steps_per_episode=4, epochs_per_eval=2, seed=0, verbose=True,
+    )
+    print(f"\nTotal time: {time.time()-t0:.0f}s")
+    print(f"Best accuracy: {best_acc:.4f} ({len(best_graph.nodes)} nodes)")
+
+
+if __name__ == "__main__":
+    main()
