@@ -95,7 +95,7 @@ class PolicyTrainer:
             "reward": reward,
         })
 
-    def update(self) -> dict:
+    def update(self, entropy_coef: float = 0.01) -> dict:
         """Update policy and value networks from stored transitions + replay."""
         if not self.transitions:
             return {"policy_loss": 0.0, "value_loss": 0.0, "n_transitions": 0}
@@ -105,23 +105,25 @@ class PolicyTrainer:
         if len(self.replay_buffer) > self.buffer_size:
             self.replay_buffer = self.replay_buffer[-self.buffer_size:]
 
-        # Use all available transitions (current + replay)
         all_transitions = self.replay_buffer
 
         features = torch.tensor([t["features"] for t in all_transitions], dtype=torch.float32)
         actions = torch.tensor([t["op_idx"] for t in all_transitions], dtype=torch.long)
         rewards = torch.tensor([t["reward"] for t in all_transitions], dtype=torch.float32)
 
-        # Value loss (MSE on predicted accuracy)
+        # Value loss
         predicted_values = self.value(features).squeeze(-1)
         value_loss = F.mse_loss(predicted_values, rewards)
 
-        # Policy loss (REINFORCE with baseline)
+        # Policy loss (REINFORCE with baseline + entropy regularization)
         logits = self.policy(features)
         dist = torch.distributions.Categorical(logits=logits)
         log_probs = dist.log_prob(actions)
         advantage = rewards - predicted_values.detach()
         policy_loss = -(log_probs * advantage).mean()
+        # Entropy bonus encourages exploration
+        entropy = dist.entropy().mean()
+        policy_loss = policy_loss - entropy_coef * entropy
 
         # Update
         self.policy_opt.zero_grad()
@@ -131,11 +133,11 @@ class PolicyTrainer:
         self.policy_opt.step()
         self.value_opt.step()
 
-        # Clear current transitions (keep replay buffer)
         self.transitions.clear()
 
         return {
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
+            "entropy": entropy.item(),
             "n_transitions": len(all_transitions),
         }
