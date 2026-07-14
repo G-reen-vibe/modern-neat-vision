@@ -32,6 +32,7 @@ OPS = [
     "widen",           # Increase channels of a random conv
     "narrow",          # Decrease channels of a random conv
     "prune",           # Remove a non-essential node
+    "add_block",       # Insert a conv+bn_relu block (compound op)
 ]
 
 
@@ -219,12 +220,45 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGr
             node_to_remove = rng.choice(removable)
             in_edge = [(u, v) for (u, v) in g.edges if v == node_to_remove][0]
             out_edge = [(u, v) for (u, v) in g.edges if u == node_to_remove][0]
-            # Reconnect parent -> child
             new_edges = [(u, v) for (u, v) in g.edges
                          if u != node_to_remove and v != node_to_remove]
             new_edges.append((in_edge[0], out_edge[1]))
             g.edges = new_edges
             del g.nodes[node_to_remove]
+
+    elif op == "add_block" and spatial_nodes:
+        # Insert a conv+bn_relu block after a random spatial node.
+        # This is a compound operation: two nodes inserted together.
+        parent = rng.choice(spatial_nodes)
+        ch = rng.choice(g.channel_options)
+        conv_id = g.next_id
+        g.next_id += 1
+        bn_id = g.next_id
+        g.next_id += 1
+        g.nodes[conv_id] = {
+            "primitive": "conv_bn_relu",
+            "hyperparams": {"out_channels": ch, "kernel_size": 3, "stride": 1, "groups": 1},
+            "position": (g.nodes[parent]["position"][0] + 0.2, rng.uniform(-0.3, 0.3)),
+        }
+        g.nodes[bn_id] = {
+            "primitive": "bn_relu",
+            "hyperparams": {},
+            "position": (g.nodes[parent]["position"][0] + 0.3, rng.uniform(-0.3, 0.3)),
+        }
+        new_edges = []
+        inserted = False
+        for (u, v) in g.edges:
+            if u == parent and not inserted:
+                new_edges.append((u, conv_id))
+                new_edges.append((conv_id, bn_id))
+                new_edges.append((bn_id, v))
+                inserted = True
+            else:
+                new_edges.append((u, v))
+        if not inserted:
+            new_edges.append((parent, conv_id))
+            new_edges.append((conv_id, bn_id))
+        g.edges = new_edges
 
     return g
 
