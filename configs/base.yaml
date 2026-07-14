@@ -1,0 +1,21 @@
+# Base config: defaults shared across all runs.
+# Override per-dataset and per-model configs.
+
+seed: 0
+device: cpu
+
+train:
+  epochs: 100
+  batch_size: 128
+  num_workers: 0
+  lr: 0.001
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  label_smoothing: 0.1
+  grad_clip: 1.0
+
+eval:
+  # metrics computed on the final trained model
+  measure_flops: true
+  measure_latency: true
+  latency_runs: 100

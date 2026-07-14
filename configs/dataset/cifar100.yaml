@@ -1,0 +1,7 @@
+dataset:
+  name: cifar100
+  in_channels: 3
+
+train:
+  epochs: 100
+  batch_size: 128

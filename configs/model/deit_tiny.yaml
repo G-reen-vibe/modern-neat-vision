@@ -1,0 +1,6 @@
+model:
+  name: deit_tiny
+
+# DeiT is more memory-hungry; smaller batch size to be safe.
+train:
+  batch_size: 64

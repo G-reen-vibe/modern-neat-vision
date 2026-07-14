@@ -1,0 +1,7 @@
+dataset:
+  name: fashionmnist
+  in_channels: 1
+
+train:
+  epochs: 30
+  batch_size: 128
