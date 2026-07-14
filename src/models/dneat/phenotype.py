@@ -210,7 +210,8 @@ def compile_phenotype(phenotype: Phenotype, in_channels: int = 3,
     """
     model = DNeatPhenotype(phenotype, in_channels=in_channels,
                            num_classes=num_classes, image_size=image_size)
-    # Apply proper initialization
+    # Apply proper initialization — matches Simple CNN's init exactly:
+    # Kaiming normal (fan_out, relu) for Conv2d AND Linear, ones/zeros for BN
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -220,7 +221,7 @@ def compile_phenotype(phenotype: Phenotype, in_channels: int = 3,
             nn.init.ones_(m.weight)
             nn.init.zeros_(m.bias)
         elif isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
     return model
