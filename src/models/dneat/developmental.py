@@ -194,6 +194,12 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
             n_choices = len(config.primitive_choices)
             prim_idx = min(n_choices - 1, int(choice_val * n_choices))
             prim_name = config.primitive_choices[prim_idx]
+            # Channel count: scale with depth (x position). Cells farther from
+            # input get more channels — matches typical CNN design where deeper
+            # layers have more channels but smaller spatial resolution.
+            # Base channels * (1 + depth_factor * 2)
+            depth_factor = max(0.0, x_norm)  # 0 at input, 1 at output
+            n_channels = max(8, int(config.default_conv_channels * (1.0 + depth_factor * 1.5)))
 
             # Decide division
             if (divide_prob > config.divide_threshold
@@ -211,7 +217,7 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
                     new_pos = candidates[0][0]
                     occupied.add(new_pos)
                     # Differentiate
-                    hyperparams = _default_hyperparams(prim_name, config.default_conv_channels)
+                    hyperparams = _default_hyperparams(prim_name, n_channels)
                     daughter = Cell(
                         cell_id=next_cell_id, position=new_pos,
                         primitive_name=prim_name, hyperparameters=hyperparams,
