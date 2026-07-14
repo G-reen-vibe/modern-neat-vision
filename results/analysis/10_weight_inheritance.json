@@ -1,0 +1,16 @@
+{
+  "no_inheritance": {
+    "step0": 0.723,
+    "step1": 0.747,
+    "step2": 0.752
+  },
+  "with_inheritance": {
+    "step0": 0.723,
+    "step1": 0.752,
+    "step2": 0.776,
+    "transferred": [
+      20,
+      20
+    ]
+  }
+}
