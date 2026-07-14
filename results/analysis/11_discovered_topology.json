@@ -1,0 +1,168 @@
+{
+  "graph": {
+    "nodes": {
+      "0": {
+        "primitive": "identity",
+        "hyperparams": {},
+        "position": [
+          -2,
+          0
+        ]
+      },
+      "1": {
+        "primitive": "conv_bn_relu",
+        "hyperparams": {
+          "out_channels": 32,
+          "kernel_size": 3,
+          "stride": 1,
+          "groups": 1
+        },
+        "position": [
+          -1.5,
+          0
+        ]
+      },
+      "2": {
+        "primitive": "max_pool_2x",
+        "hyperparams": {},
+        "position": [
+          -1,
+          0
+        ]
+      },
+      "3": {
+        "primitive": "conv_bn_relu",
+        "hyperparams": {
+          "out_channels": 64,
+          "kernel_size": 3,
+          "stride": 1,
+          "groups": 1
+        },
+        "position": [
+          -0.5,
+          0
+        ]
+      },
+      "4": {
+        "primitive": "max_pool_2x",
+        "hyperparams": {},
+        "position": [
+          0,
+          0
+        ]
+      },
+      "5": {
+        "primitive": "conv_bn_relu",
+        "hyperparams": {
+          "out_channels": 128,
+          "kernel_size": 3,
+          "stride": 1,
+          "groups": 1
+        },
+        "position": [
+          0.5,
+          0
+        ]
+      },
+      "6": {
+        "primitive": "global_avg_pool",
+        "hyperparams": {},
+        "position": [
+          1,
+          0
+        ]
+      },
+      "7": {
+        "primitive": "linear_head",
+        "hyperparams": {},
+        "position": [
+          1.5,
+          0
+        ]
+      },
+      "8": {
+        "primitive": "max_pool_2x",
+        "hyperparams": {},
+        "position": [
+          0.2,
+          0
+        ]
+      },
+      "9": {
+        "primitive": "bn_relu",
+        "hyperparams": {},
+        "position": [
+          0.6,
+          0
+        ]
+      },
+      "10": {
+        "primitive": "bn_relu",
+        "hyperparams": {},
+        "position": [
+          0.7,
+          0
+        ]
+      },
+      "11": {
+        "primitive": "bn_relu",
+        "hyperparams": {},
+        "position": [
+          0.6,
+          0
+        ]
+      }
+    },
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        8
+      ],
+      [
+        8,
+        5
+      ],
+      [
+        5,
+        11
+      ],
+      [
+        11,
+        9
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        10,
+        6
+      ],
+      [
+        6,
+        7
+      ]
+    ],
+    "input_id": 0,
+    "output_id": 7,
+    "next_id": 12
+  },
+  "acc": 0.798,
+  "description": "identity -> conv_bn_relu(32) -> max_pool_2x -> conv_bn_relu(64) -> max_pool_2x -> conv_bn_relu(128) -> global_avg_pool -> linear_head -> max_pool_2x -> bn_relu -> bn_relu -> bn_relu"
+}
