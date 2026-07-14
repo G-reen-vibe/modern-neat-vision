@@ -162,8 +162,16 @@ def main():
         tl, vl, nc, spec.in_channels, spec.image_size,
         n_episodes=2, steps_per_episode=4, epochs_per_eval=2, seed=0, verbose=True,
     )
-    print(f"\nTotal time: {time.time()-t0:.0f}s")
-    print(f"Best accuracy: {best_acc:.4f} ({len(best_graph.nodes)} nodes)")
+    print(f"\nSearch time: {time.time()-t0:.0f}s")
+    print(f"Best accuracy during search: {best_acc:.4f} ({len(best_graph.nodes)} nodes)")
+
+    # Finetune the best graph with more epochs
+    print("\n=== Finetuning best graph (5 epochs) ===")
+    finetune_acc, finetune_params, finetune_time = evaluate_graph(
+        best_graph, tl, vl, nc, spec.in_channels, spec.image_size, epochs=5, cache=None
+    )
+    print(f"Finetuned accuracy: {finetune_acc:.4f} (params={finetune_params}, time={finetune_time:.0f}s)")
+    print(f"Total time: {time.time()-t0:.0f}s")
 
 
 if __name__ == "__main__":
