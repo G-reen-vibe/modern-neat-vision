@@ -51,25 +51,31 @@ class GrowthGraph:
 
 
 def initial_graph() -> GrowthGraph:
-    """Create the starting graph: input -> conv(64) -> bn_relu -> conv(64) -> pool -> head.
+    """Create the starting graph matching Simple CNN's architecture.
 
-    Wider initial graph (64 channels) to match Simple CNN's capacity.
+    3 conv layers with increasing channels (32->64->128) + max pooling.
+    This gives the search a strong starting point comparable to the
+    hand-designed Simple CNN baseline.
     """
     g = GrowthGraph()
-    g.nodes[0] = {"primitive": "identity", "hyperparams": {}, "position": (-1, 0)}
+    g.nodes[0] = {"primitive": "identity", "hyperparams": {}, "position": (-2, 0)}
     g.nodes[1] = {"primitive": "conv_bn_relu",
-                  "hyperparams": {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
-                  "position": (-0.5, 0)}
-    g.nodes[2] = {"primitive": "bn_relu", "hyperparams": {}, "position": (0, 0)}
+                  "hyperparams": {"out_channels": 32, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "position": (-1.5, 0)}
+    g.nodes[2] = {"primitive": "max_pool_2x", "hyperparams": {}, "position": (-1, 0)}
     g.nodes[3] = {"primitive": "conv_bn_relu",
                   "hyperparams": {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "position": (-0.5, 0)}
+    g.nodes[4] = {"primitive": "max_pool_2x", "hyperparams": {}, "position": (0, 0)}
+    g.nodes[5] = {"primitive": "conv_bn_relu",
+                  "hyperparams": {"out_channels": 128, "kernel_size": 3, "stride": 1, "groups": 1},
                   "position": (0.5, 0)}
-    g.nodes[4] = {"primitive": "global_avg_pool", "hyperparams": {}, "position": (1, 0)}
-    g.nodes[5] = {"primitive": "linear_head", "hyperparams": {}, "position": (1.5, 0)}
-    g.edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+    g.nodes[6] = {"primitive": "global_avg_pool", "hyperparams": {}, "position": (1, 0)}
+    g.nodes[7] = {"primitive": "linear_head", "hyperparams": {}, "position": (1.5, 0)}
+    g.edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)]
     g.input_id = 0
-    g.output_id = 5
-    g.next_id = 6
+    g.output_id = 7
+    g.next_id = 8
     return g
 
 
