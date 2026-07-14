@@ -153,10 +153,11 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
     next_cell_id += 1
 
     # Place a "seed" cell at (0, 0) that will be the first to develop
+    seed_channels = max(8, int(config.default_conv_channels * getattr(genome, 'channel_mult', 1.0)))
     seed_cell = Cell(
         cell_id=next_cell_id, position=(0.0, 0.0),
         primitive_name="conv_bn_relu",
-        hyperparameters={"out_channels": config.default_conv_channels, "kernel_size": 3, "stride": 1, "groups": 1},
+        hyperparameters={"out_channels": seed_channels, "kernel_size": 3, "stride": 1, "groups": 1},
         parent_id=0, born_at_step=0,
     )
     cells.append(seed_cell)
@@ -200,7 +201,9 @@ def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
             connect_norm = (math.tanh(connect_val) + 1) / 2  # [0, 1]
             # Add noise to channel count too
             connect_norm = max(0.0, min(1.0, connect_norm + rng.uniform(-0.1, 0.1)))
-            n_channels = max(8, int(config.default_conv_channels * (0.5 + connect_norm * 2.5)))
+            base_channels = config.default_conv_channels * (0.5 + connect_norm * 2.5)
+            # Apply genome's global channel multiplier
+            n_channels = max(8, int(base_channels * getattr(genome, 'channel_mult', 1.0)))
 
             # Decide division
             if (divide_prob > config.divide_threshold

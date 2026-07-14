@@ -48,6 +48,9 @@ class Genome:
     edges: List[GenomeEdge] = field(default_factory=list)
     next_node_id: int = 0
     next_innovation: int = 0
+    # Global hyperparameters that evolve alongside the topology.
+    # channel_mult scales all conv channel counts in the developed phenotype.
+    channel_mult: float = 1.0
 
     def add_input(self, name: str, activation: str = "none") -> int:
         nid = self.next_node_id
@@ -102,6 +105,10 @@ class Genome:
         for e in self.edges:
             if random.random() < 0.8:
                 e.weight += random.gauss(0, sigma)
+
+    def mutate_channel_mult(self, sigma: float = 0.2) -> None:
+        """Perturb the global channel multiplier."""
+        self.channel_mult = max(0.25, min(4.0, self.channel_mult * (1.0 + random.gauss(0, sigma))))
 
 
 def minimal_genome() -> Genome:

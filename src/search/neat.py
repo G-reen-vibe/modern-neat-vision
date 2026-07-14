@@ -57,6 +57,35 @@ def _tournament_select(population: List[Individual], k: int, rng: random.Random)
     return max(contestants, key=lambda i: i.fitness)
 
 
+def _phenotype_signature(ind: Individual) -> dict:
+    """Extract a primitive-type histogram from the individual's phenotype."""
+    if ind.phenotype is None:
+        return {}
+    sig = {}
+    for node in ind.phenotype.nodes.values():
+        sig[node.primitive_name] = sig.get(node.primitive_name, 0) + 1
+    return sig
+
+
+def _compute_novelty(sig: dict, archive: list[dict]) -> float:
+    """Compute novelty = average distance to the k nearest archive entries."""
+    if not archive:
+        return 1.0
+    all_keys = set()
+    for a in archive:
+        all_keys.update(a.keys())
+    all_keys.update(sig.keys())
+    distances = []
+    for a in archive:
+        total = sum(abs(sig.get(k, 0) - a.get(k, 0)) for k in all_keys)
+        norm = max(1, sum(sig.values()) + sum(a.values()))
+        distances.append(total / norm)
+    distances.sort()
+    # Average of k nearest (k=3 or all if fewer)
+    k = min(3, len(distances))
+    return sum(distances[:k]) / k
+
+
 def mutate_genome(genome: Genome, config: DNeatConfig, rng: random.Random) -> Genome:
     """Apply mutations to a genome. Returns a mutated copy."""
     import copy
@@ -67,6 +96,9 @@ def mutate_genome(genome: Genome, config: DNeatConfig, rng: random.Random) -> Ge
         g.mutate_add_edge()
     if rng.random() < config.mutation_rate_perturb:
         g.mutate_perturb_weights(sigma=config.mutation_sigma)
+    # Channel multiplier mutation (30% chance)
+    if rng.random() < 0.3:
+        g.mutate_channel_mult(sigma=0.2)
     return g
 
 
@@ -225,6 +257,8 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
     best_ind = None
     best_fitness = -float("inf")
     speciator = Speciator(compatibility_threshold=0.3)
+    # Archive of past phenotype signatures for novelty bonus
+    novelty_archive: list[dict] = []
 
     for gen in range(config.generations):
         # Evaluate
@@ -234,8 +268,17 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
                     print(f"  [Gen {gen+1}] Evaluating individual {ind.id}...", end="", flush=True)
                 evaluate_individual(ind, config, train_loader, val_loader,
                                     num_classes, in_channels, image_size)
+                # Novelty bonus: compare phenotype signature to archive
+                if ind.phenotype is not None and ind.val_acc > 0:
+                    sig = _phenotype_signature(ind)
+                    novelty = _compute_novelty(sig, novelty_archive)
+                    ind.fitness += 0.02 * novelty  # small bonus
                 if verbose:
                     print(f" acc={ind.val_acc:.4f} ({ind.train_time_s:.0f}s)")
+        # Add current population signatures to archive
+        for ind in population:
+            if ind.phenotype is not None:
+                novelty_archive.append(_phenotype_signature(ind))
         # Speciate
         speciator.speciate(population)
         # Sort by fitness
