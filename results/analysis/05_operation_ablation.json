@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "mean": 0.246,
+    "params": 94186,
+    "delta": 0.0
+  },
+  "add_conv": {
+    "mean": 0.0,
+    "params": 0,
+    "delta": -0.246
+  },
+  "add_dw_sep": {
+    "mean": 0.142,
+    "params": 80986,
+    "delta": -0.10400000000000001
+  },
+  "add_pool": {
+    "mean": 0.23,
+    "params": 94186,
+    "delta": -0.015999999999999986
+  },
+  "add_bn_relu": {
+    "mean": 0.134,
+    "params": 94250,
+    "delta": -0.11199999999999999
+  },
+  "add_skip": {
+    "mean": 0.246,
+    "params": 94186,
+    "delta": 0.0
+  },
+  "widen": {
+    "mean": 0.07,
+    "params": 33034,
+    "delta": -0.176
+  },
+  "narrow": {
+    "mean": 0.208,
+    "params": 23626,
+    "delta": -0.038000000000000006
+  },
+  "prune": {
+    "mean": 0.246,
+    "params": 94186,
+    "delta": 0.0
+  },
+  "add_block": {
+    "mean": 0.156,
+    "params": 82698,
+    "delta": -0.09
+  }
+}
