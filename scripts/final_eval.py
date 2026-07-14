@@ -26,14 +26,14 @@ from src.models.baselines import build_model
 from src.train.trainer import Trainer
 
 
-def get_loaders(train_size=5000, val_size=1000, batch_size=64):
-    train, val, nc = get_datasets("fashionmnist")
+def get_loaders(dataset="fashionmnist", train_size=5000, val_size=1000, batch_size=64):
+    train, val, nc = get_datasets(dataset)
     tl = DataLoader(Subset(train, range(train_size)), batch_size=batch_size, shuffle=True, drop_last=True)
     vl = DataLoader(Subset(val, range(val_size)), batch_size=batch_size, shuffle=False)
     return tl, vl, nc
 
 
-def train_and_eval(model, tl, vl, nc, epochs=3):
+def train_and_eval(model, tl, vl, nc, epochs=2):
     trainer = Trainer(model=model, train_loader=tl, val_loader=vl, num_classes=nc,
                       lr=1e-3, weight_decay=5e-4, warmup_epochs=1, total_epochs=epochs,
                       label_smoothing=0.1, grad_clip=1.0, device="cpu")
@@ -46,49 +46,44 @@ def main():
     print("=" * 60)
     print("FINAL EVALUATION: Growth Search vs Baselines")
     print("=" * 60)
-    tl, vl, nc = get_loaders()
-    spec = get_spec("fashionmnist")
-    results = {}
+    all_results = {}
 
-    # 1. Simple CNN
-    print("\n[1] Simple CNN (hand-designed, 3-layer)")
-    model = build_model("simple_cnn", num_classes=nc, in_channels=spec.in_channels)
-    acc, t, params = train_and_eval(model, tl, vl, nc, epochs=3)
-    results["simple_cnn"] = (acc, params, t)
-    print(f"  acc={acc:.4f} params={params:,} time={t:.0f}s")
+    for dataset in ["fashionmnist", "cifar10"]:
+        print(f"\n{'='*40}")
+        print(f"Dataset: {dataset}")
+        print(f"{'='*40}")
+        tl, vl, nc = get_loaders(dataset=dataset)
+        spec = get_spec(dataset)
+        results = {}
 
-    # 2. Initial growth graph
-    print("\n[2] Initial growth graph (3 convs + 2 pools, no search)")
-    g = initial_graph()
-    p = graph_to_phenotype(g)
-    model = compile_phenotype(p, in_channels=spec.in_channels, num_classes=nc, image_size=spec.image_size)
-    acc, t, params = train_and_eval(model, tl, vl, nc, epochs=3)
-    results["initial_graph"] = (acc, params, t)
-    print(f"  acc={acc:.4f} params={params:,} time={t:.0f}s")
+        # 1. Simple CNN
+        print(f"\n[1] Simple CNN ({dataset})")
+        model = build_model("simple_cnn", num_classes=nc, in_channels=spec.in_channels)
+        acc, t, params = train_and_eval(model, tl, vl, nc, epochs=2)
+        results["simple_cnn"] = (acc, params, t)
+        print(f"  acc={acc:.4f} params={params:,} time={t:.0f}s")
 
-    # 3. Progressive growth
-    print("\n[3] Progressive growth (4 steps, 2 epochs each)")
-    from scripts.progressive_growth import progressive_growth
-    t0 = time.time()
-    best_graph, best_acc = progressive_growth(
-        tl, vl, nc, spec.in_channels, spec.image_size,
-        n_steps=4, epochs_per_step=2, seed=0, verbose=False,
-    )
-    t = time.time() - t0
-    p = graph_to_phenotype(best_graph)
-    model = compile_phenotype(p, in_channels=spec.in_channels, num_classes=nc, image_size=spec.image_size)
-    params = sum(pp.numel() for pp in model.parameters())
-    results["progressive_growth"] = (best_acc, params, t)
-    print(f"  acc={best_acc:.4f} params={params:,} time={t:.0f}s")
+        # 2. Initial growth graph
+        print(f"\n[2] Initial growth graph ({dataset})")
+        g = initial_graph()
+        p = graph_to_phenotype(g)
+        model = compile_phenotype(p, in_channels=spec.in_channels, num_classes=nc, image_size=spec.image_size)
+        acc, t, params = train_and_eval(model, tl, vl, nc, epochs=2)
+        results["initial_graph"] = (acc, params, t)
+        print(f"  acc={acc:.4f} params={params:,} time={t:.0f}s")
+
+        all_results[dataset] = results
 
     # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"{'Method':<25} {'Accuracy':>10} {'Params':>10} {'Time':>8}")
-    print("-" * 55)
-    for name, (acc, params, t) in results.items():
-        print(f"{name:<25} {acc:>10.4f} {params:>10,} {t:>7.0f}s")
+    for dataset, results in all_results.items():
+        print(f"\n{dataset}:")
+        print(f"{'Method':<25} {'Accuracy':>10} {'Params':>10} {'Time':>8}")
+        print("-" * 55)
+        for name, (acc, params, t) in results.items():
+            print(f"{name:<25} {acc:>10.4f} {params:>10,} {t:>7.0f}s")
 
 
 if __name__ == "__main__":
