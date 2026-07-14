@@ -4,6 +4,13 @@ import random
 import numpy as np
 import torch
 
+# Set thread limits once at import time (before any parallel work starts)
+torch.set_num_threads(2)
+try:
+    torch.set_num_interop_threads(2)
+except RuntimeError:
+    pass  # already set
+
 
 def seed_everything(seed: int) -> None:
     """Seed Python, NumPy, and PyTorch RNGs.
@@ -19,6 +26,3 @@ def seed_everything(seed: int) -> None:
     # Determinism (slight perf cost; acceptable for research)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # Limit threads to available CPUs (we have 2)
-    torch.set_num_threads(2)
-    torch.set_num_interop_threads(2)
