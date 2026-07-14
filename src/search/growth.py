@@ -229,6 +229,16 @@ def graph_to_phenotype(g: GrowthGraph) -> Phenotype:
     return p
 
 
+def graph_hash(g: GrowthGraph) -> str:
+    """A hash of the graph's structure (nodes + edges). Useful for dedup."""
+    node_strs = []
+    for nid in sorted(g.nodes.keys()):
+        n = g.nodes[nid]
+        node_strs.append(f"{nid}:{n['primitive']}:{n['hyperparams'].get('out_channels', '')}")
+    edge_strs = [f"{u}->{v}" for (u, v) in sorted(g.edges)]
+    return "|".join(node_strs) + "||" + "|".join(edge_strs)
+
+
 def graph_features(g: GrowthGraph) -> list:
     """Extract a feature vector from the graph for the policy network."""
     n_nodes = len(g.nodes)

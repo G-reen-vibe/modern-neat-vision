@@ -25,15 +25,25 @@ from torch.utils.data import Subset, DataLoader
 from src.data.datasets import get_datasets, get_spec
 from src.search.growth import (
     initial_graph, apply_operation, graph_to_phenotype,
-    graph_features, OPS, GrowthGraph,
+    graph_features, graph_hash, OPS, GrowthGraph,
 )
 from src.search.policy import PolicyTrainer
 from src.models.dneat.phenotype import compile_phenotype
 from src.train.trainer import Trainer
 
 
-def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs=2):
+def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs=2,
+                   cache=None):
+    """Evaluate a graph. Returns (accuracy, param_count, time_s).
+
+    If cache is provided (a dict mapping graph_hash -> (acc, params)),
+    skip evaluation for graphs we've already seen.
+    """
     t0 = time.time()
+    gh = graph_hash(graph)
+    if cache is not None and gh in cache:
+        acc, params = cache[gh]
+        return acc, params, 0.0
     p = graph_to_phenotype(graph)
     if p is None or not p.is_valid():
         return 0.0, 0, time.time() - t0
@@ -47,7 +57,10 @@ def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, im
                           warmup_epochs=1, total_epochs=epochs, label_smoothing=0.1,
                           grad_clip=1.0, device="cpu")
         result = trainer.fit(epochs, logger=None, eval_every=1)
-        return result["best_acc"], params, time.time() - t0
+        acc = result["best_acc"]
+        if cache is not None:
+            cache[gh] = (acc, params)
+        return acc, params, time.time() - t0
     except Exception:
         return 0.0, 0, time.time() - t0
 
@@ -67,11 +80,12 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
     trainer = PolicyTrainer(lr=1e-3)
     best_graph_ever = None
     best_acc_ever = 0.0
+    eval_cache = {}  # graph_hash -> (acc, params)
 
     for ep in range(n_episodes):
         current = initial_graph()
         cur_acc, cur_params, _ = evaluate_graph(
-            current, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
+            current, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval, eval_cache
         )
         if verbose:
             print(f"\n--- Episode {ep+1}/{n_episodes} ---")
@@ -92,10 +106,15 @@ def policy_search(train_loader, val_loader, num_classes, in_channels, image_size
             best_acc = cur_acc
             best_params = cur_params
             best_op_idx = None
+            seen_hashes = set()
             for op_idx, op_name in candidates:
                 new_graph = apply_operation(current, OPS[op_idx], rng)
+                gh = graph_hash(new_graph)
+                if gh in seen_hashes:
+                    continue  # skip duplicate
+                seen_hashes.add(gh)
                 new_acc, new_params, t = evaluate_graph(
-                    new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval
+                    new_graph, train_loader, val_loader, num_classes, in_channels, image_size, epochs_per_eval, eval_cache
                 )
                 reward = new_acc - cur_acc
                 trainer.store(features, op_idx, reward)
