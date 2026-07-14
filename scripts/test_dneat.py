@@ -32,18 +32,18 @@ def get_small_loaders(dataset_name: str = "fashionmnist",
 def main():
     print("=== D-NEAT quick search test ===")
     print("Loading data...")
-    train_loader, val_loader, nc = get_small_loaders("fashionmnist", 2000, 500, 128)
+    train_loader, val_loader, nc = get_small_loaders("fashionmnist", 3000, 1000, 64)
     spec = get_spec("fashionmnist")
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     config = DNeatConfig(
-        population_size=4,
+        population_size=3,
         generations=2,
-        inner_train_epochs=1,
+        inner_train_epochs=2,
         stability_weight=0.0,
-        train_subset_size=2000,
-        val_subset_size=500,
-        batch_size=128,
+        train_subset_size=3000,
+        val_subset_size=1000,
+        batch_size=64,
         dev_config=DevelopmentalConfig(noise_sigma=0.0),
     )
     print(f"Config: pop={config.population_size}, gens={config.generations}, "

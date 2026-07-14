@@ -13,7 +13,7 @@ from typing import List, Optional, Callable
 import torch
 import torch.nn as nn
 
-from src.models.dneat.genome import Genome, minimal_genome, random_genome
+from src.models.dneat.genome import Genome, GenomeNode, GenomeEdge, minimal_genome, random_genome
 from src.models.dneat.developmental import develop, DevelopmentalConfig, stability_score
 from src.models.dneat.phenotype import compile_phenotype
 from src.utils.seed import seed_everything
@@ -60,6 +60,66 @@ def mutate_genome(genome: Genome, config: DNeatConfig, rng: random.Random) -> Ge
     if rng.random() < config.mutation_rate_perturb:
         g.mutate_perturb_weights(sigma=config.mutation_sigma)
     return g
+
+
+def crossover(parent_a: Genome, parent_b: Genome, rng: random.Random) -> Genome:
+    """NEAT-style crossover. Parent_a is the fitter parent.
+
+    - For matching genes (same innovation number): inherit from either parent randomly.
+    - For excess/disjoint genes: inherit from the fitter parent (parent_a).
+    """
+    import copy
+    # Build innovation -> edge maps
+    edges_a = {e.edge_id: e for e in parent_a.edges}
+    edges_b = {e.edge_id: e for e in parent_b.edges}
+    all_innovations = set(edges_a.keys()) | set(edges_b.keys())
+
+    child = Genome()
+    # Copy nodes from parent_a (fitter), plus any nodes from parent_b that
+    # have edges with innovations not in parent_a
+    child.next_node_id = 0
+    child.next_innovation = 0
+    # Map old node IDs to new node IDs
+    node_map = {}
+    for nid, node in parent_a.nodes.items():
+        new_nid = child.next_node_id
+        child.next_node_id += 1
+        node_map[nid] = new_nid
+        child.nodes[new_nid] = GenomeNode(new_nid, node.kind, node.activation)
+    # Add nodes from parent_b that aren't in parent_a
+    for nid, node in parent_b.nodes.items():
+        if nid not in node_map:
+            new_nid = child.next_node_id
+            child.next_node_id += 1
+            node_map[nid] = new_nid
+            child.nodes[new_nid] = GenomeNode(new_nid, node.kind, node.activation)
+
+    # Inherit edges
+    for innov in sorted(all_innovations):
+        if innov in edges_a and innov in edges_b:
+            # Matching gene: pick randomly
+            e = edges_a[innov] if rng.random() < 0.5 else edges_b[innov]
+        elif innov in edges_a:
+            # Excess/disjoint from fitter parent: keep
+            e = edges_a[innov]
+        else:
+            # Excess/disjoint from weaker parent: skip (NEAT standard)
+            continue
+        new_e = GenomeEdge(
+            edge_id=child.next_innovation,
+            src=node_map[e.src],
+            dst=node_map[e.dst],
+            weight=e.weight,
+            enabled=e.enabled,
+        )
+        child.next_innovation += 1
+        child.edges.append(new_e)
+
+    # Set input/output IDs
+    if hasattr(parent_a, "input_ids"):
+        child.input_ids = [node_map[i] for i in parent_a.input_ids if i in node_map]
+        child.output_ids = [node_map[i] for i in parent_a.output_ids if i in node_map]
+    return child
 
 
 def evaluate_individual(ind: Individual, config: DNeatConfig,
@@ -120,8 +180,12 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
         # Evaluate
         for ind in population:
             if ind.fitness <= -float("inf") / 2:  # unevaluated
+                if verbose:
+                    print(f"  [Gen {gen+1}] Evaluating individual {ind.id}...", end="", flush=True)
                 evaluate_individual(ind, config, train_loader, val_loader,
                                     num_classes, in_channels, image_size)
+                if verbose:
+                    print(f" acc={ind.val_acc:.4f} ({ind.train_time_s:.0f}s)")
         # Sort by fitness
         population.sort(key=lambda i: i.fitness, reverse=True)
         if population[0].fitness > best_fitness:
@@ -144,8 +208,17 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
         new_pop: List[Individual] = list(elites)  # carry elites
         next_id = max(i.id for i in population) + 1
         while len(new_pop) < config.population_size:
-            parent = rng.choice(elites)
-            child_genome = mutate_genome(parent.genome, config, rng)
+            if rng.random() < 0.3 and len(elites) >= 2:
+                # Crossover two elites
+                parent_a = rng.choice(elites)
+                parent_b = rng.choice([e for e in elites if e.id != parent_a.id] or elites)
+                child_genome = crossover(parent_a.genome, parent_b.genome, rng)
+                # Also mutate
+                child_genome = mutate_genome(child_genome, config, rng)
+            else:
+                # Asexual mutation
+                parent = rng.choice(elites)
+                child_genome = mutate_genome(parent.genome, config, rng)
             child = Individual(id=next_id, genome=child_genome)
             new_pop.append(child)
             next_id += 1

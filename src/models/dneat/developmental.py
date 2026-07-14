@@ -89,25 +89,21 @@ class Cell:
 @dataclass
 class DevelopmentalConfig:
     grid_resolution: int = 3  # 3x3 grid of possible positions
-    max_steps: int = 3
+    max_steps: int = 2
     divide_threshold: float = 0.5
-    connect_radius: float = 1.5  # in [-1, 1] coordinate space — large enough to span the grid
+    connect_radius: float = 1.5
     min_cells: int = 3
-    max_cells: int = 8
+    max_cells: int = 6
     # Primitive vocabulary the CPPN can choose from (excluding input/output).
     primitive_choices: List[str] = field(default_factory=lambda: [
         "conv_bn_relu", "dw_sep_conv", "global_avg_pool",
     ])
-    noise_sigma: float = 0.0  # for stability testing
-    # The output region: cells within this distance of (1, 0) get connected to
-    # the global_avg_pool output cell, ensuring all cells can reach the output.
+    noise_sigma: float = 0.0
     output_attraction_radius: float = 1.5
-    # Cap on proximity-based edges per cell. Without this, dense grids produce
-    # O(N^2) edges, which makes the phenotype's forward pass very slow due to
-    # many merge modules with their own conv adapters.
-    max_proximity_edges_per_cell: int = 2
+    # Cap on proximity-based edges per cell.
+    max_proximity_edges_per_cell: int = 1
     # Default out_channels for conv primitives. Smaller = faster.
-    default_conv_channels: int = 32
+    default_conv_channels: int = 16
 
 
 def _grid_positions(resolution: int) -> List[Tuple[float, float]]:
