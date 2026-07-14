@@ -25,12 +25,12 @@ from src.models.dneat.developmental import Phenotype, PhenotypeNode
 # Growth operation types
 OPS = [
     "add_conv",        # Insert a conv layer after a random node
+    "add_dw_sep",      # Insert a depthwise-separable conv
     "add_pool",        # Insert a max_pool after a random spatial node
     "add_bn_relu",     # Insert BN+ReLU after a random spatial node
     "add_skip",        # Add a skip connection between two nodes
     "widen",           # Increase channels of a random conv
     "narrow",          # Decrease channels of a random conv
-    "change_prim",     # Change a node's primitive type
 ]
 
 
@@ -92,6 +92,30 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGr
             "position": (g.nodes[parent]["position"][0] + 0.3, rng.uniform(-0.5, 0.5)),
         }
         # Find edges from parent, insert new node in between
+        new_edges = []
+        inserted = False
+        for (u, v) in g.edges:
+            if u == parent and not inserted:
+                new_edges.append((u, new_id))
+                new_edges.append((new_id, v))
+                inserted = True
+            else:
+                new_edges.append((u, v))
+        if not inserted:
+            new_edges.append((parent, new_id))
+        g.edges = new_edges
+
+    elif op == "add_dw_sep" and spatial_nodes:
+        # Insert a depthwise-separable conv after a random spatial node
+        parent = rng.choice(spatial_nodes)
+        new_id = g.next_id
+        g.next_id += 1
+        ch = rng.choice(g.channel_options)
+        g.nodes[new_id] = {
+            "primitive": "dw_sep_conv",
+            "hyperparams": {"out_channels": ch, "stride": 1},
+            "position": (g.nodes[parent]["position"][0] + 0.3, rng.uniform(-0.5, 0.5)),
+        }
         new_edges = []
         inserted = False
         for (u, v) in g.edges:
@@ -178,24 +202,6 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGr
         idx = g.channel_options.index(current) if current in g.channel_options else 1
         new_idx = max(0, idx - 1)
         g.nodes[node]["hyperparams"]["out_channels"] = g.channel_options[new_idx]
-
-    elif op == "change_prim" and spatial_nodes:
-        node = rng.choice(spatial_nodes)
-        current = g.nodes[node]["primitive"]
-        alternatives = [p for p in ["conv_bn_relu", "dw_sep_conv", "bn_relu"]
-                        if p != current]
-        if alternatives:
-            new_prim = rng.choice(alternatives)
-            # Save old state for potential rollback
-            old_prim = g.nodes[node]["primitive"]
-            old_hyper = dict(g.nodes[node]["hyperparams"])
-            g.nodes[node]["primitive"] = new_prim
-            if new_prim in ("conv_bn_relu", "dw_sep_conv"):
-                ch = rng.choice(g.channel_options)
-                g.nodes[node]["hyperparams"] = {"out_channels": ch, "kernel_size": 3, "stride": 1, "groups": 1}
-            else:
-                # bn_relu preserves input channels, so clear hyperparams
-                g.nodes[node]["hyperparams"] = {}
 
     return g
 
