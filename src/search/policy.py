@@ -14,7 +14,7 @@ import numpy as np
 from typing import List, Tuple
 from src.search.growth import OPS, graph_features, GrowthGraph
 
-N_FEATURES = 9  # n_nodes, n_edges, depth, total_ch, 5 prim counts
+N_FEATURES = 11  # n_nodes, n_edges, depth, total_ch, mean_ch, density, 5 prim counts
 N_OPS = len(OPS)
 
 

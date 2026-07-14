@@ -297,17 +297,25 @@ def graph_hash(g: GrowthGraph) -> str:
 
 
 def graph_features(g: GrowthGraph) -> list:
-    """Extract a feature vector from the graph for the policy network."""
+    """Extract a feature vector from the graph for the policy network.
+
+    Features:
+      - Normalized node count, edge count, depth, total channels
+      - Per-primitive counts (5 types)
+      - Mean channels per conv layer
+      - Fraction of nodes that are conv vs pool vs bn
+      - Graph density (edges / max possible)
+    """
     n_nodes = len(g.nodes)
     n_edges = len(g.edges)
-    # Primitive histogram
     prim_counts = {"identity": 0, "conv_bn_relu": 0, "dw_sep_conv": 0,
                    "max_pool_2x": 0, "bn_relu": 0, "global_avg_pool": 0, "linear_head": 0}
     for n in g.nodes.values():
         prim_counts[n["primitive"]] = prim_counts.get(n["primitive"], 0) + 1
-    # Total channels
     total_ch = sum(n["hyperparams"].get("out_channels", 0) for n in g.nodes.values())
-    # Depth (longest path)
+    n_conv = prim_counts["conv_bn_relu"] + prim_counts["dw_sep_conv"]
+    mean_ch = total_ch / max(1, n_conv)
+    # Depth
     try:
         nx_g = nx.DiGraph()
         for nid in g.nodes:
@@ -320,10 +328,15 @@ def graph_features(g: GrowthGraph) -> list:
             depth = 0
     except Exception:
         depth = 0
+    # Density
+    max_edges = n_nodes * (n_nodes - 1) / 2
+    density = n_edges / max(1, max_edges)
     features = [
         n_nodes / 20.0,
         n_edges / 30.0,
         depth / 10.0,
         total_ch / 200.0,
+        mean_ch / 64.0,
+        density,
     ] + [prim_counts[k] / 5.0 for k in ["conv_bn_relu", "dw_sep_conv", "max_pool_2x", "bn_relu", "global_avg_pool"]]
     return features
