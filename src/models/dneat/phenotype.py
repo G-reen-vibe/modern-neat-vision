@@ -161,6 +161,10 @@ class DNeatPhenotype(nn.Module):
                     parent_spatial = self._shapes[in_edges[0][0]][2] if in_edges else image_size
                     out_spatial = max(1, parent_spatial // stride)
                     self._shapes[nid] = (out_ch, "spatial", out_spatial)
+                elif pnode.primitive_name == "max_pool_2x":
+                    parent_spatial = self._shapes[in_edges[0][0]][2] if in_edges else image_size
+                    out_spatial = max(1, parent_spatial // 2)
+                    self._shapes[nid] = (in_ch, "spatial", out_spatial)
                 else:
                     self._shapes[nid] = (in_ch, "spatial", image_size)
             elif spec.output_type == TYPE_VECTOR:

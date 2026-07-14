@@ -18,6 +18,7 @@ from src.models.dneat.developmental import develop, DevelopmentalConfig, stabili
 from src.models.dneat.phenotype import compile_phenotype
 from src.utils.seed import seed_everything
 from src.train.trainer import Trainer
+from src.search.speciation import Speciator
 
 
 @dataclass
@@ -47,6 +48,7 @@ class Individual:
     phenotype_node_count: int = 0
     train_time_s: float = 0.0
     val_acc: float = 0.0
+    phenotype: object = None  # for speciation
 
 
 def _tournament_select(population: List[Individual], k: int, rng: random.Random) -> Individual:
@@ -135,6 +137,7 @@ def evaluate_individual(ind: Individual, config: DNeatConfig,
     t0 = time.time()
     try:
         phenotype = develop(ind.genome, config.dev_config, seed=0)
+        ind.phenotype = phenotype  # store for speciation
         if not phenotype.is_valid():
             ind.fitness = -0.1  # penalize invalid
             ind.val_acc = 0.0
@@ -181,6 +184,7 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
     # Track best
     best_ind = None
     best_fitness = -float("inf")
+    speciator = Speciator(compatibility_threshold=0.3)
 
     for gen in range(config.generations):
         # Evaluate
@@ -192,6 +196,8 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
                                     num_classes, in_channels, image_size)
                 if verbose:
                     print(f" acc={ind.val_acc:.4f} ({ind.train_time_s:.0f}s)")
+        # Speciate
+        speciator.speciate(population)
         # Sort by fitness
         population.sort(key=lambda i: i.fitness, reverse=True)
         if population[0].fitness > best_fitness:
@@ -202,9 +208,11 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
             accs = [i.val_acc for i in population]
             nodes = [i.phenotype_node_count for i in population]
             times = [i.train_time_s for i in population]
+            n_species = len(speciator.species)
             print(f"  Gen {gen+1}/{config.generations}: "
                   f"best_acc={max(accs):.4f} mean_acc={sum(accs)/len(accs):.4f} "
                   f"best_nodes={max(nodes)} mean_nodes={sum(nodes)/len(nodes):.1f} "
+                  f"species={n_species} "
                   f"gen_time={sum(times):.0f}s")
 
         # Elites (carried over unchanged)

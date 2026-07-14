@@ -96,7 +96,7 @@ class DevelopmentalConfig:
     max_cells: int = 6
     # Primitive vocabulary the CPPN can choose from (excluding input/output).
     primitive_choices: List[str] = field(default_factory=lambda: [
-        "conv_bn_relu", "dw_sep_conv", "global_avg_pool",
+        "conv_bn_relu", "dw_sep_conv", "max_pool_2x", "bn_relu", "global_avg_pool",
     ])
     noise_sigma: float = 0.0
     output_attraction_radius: float = 1.5

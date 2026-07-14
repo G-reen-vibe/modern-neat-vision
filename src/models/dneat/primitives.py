@@ -128,6 +128,36 @@ class GlobalAvgPool(PrimitiveSpec):
         return nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(1))
 
 
+class MaxPool2x(PrimitiveSpec):
+    """2x2 max pooling with stride 2. Halves spatial resolution."""
+    def __init__(self):
+        super().__init__(
+            name="max_pool_2x",
+            input_types=[TYPE_SPATIAL],
+            output_type=TYPE_SPATIAL,
+            hyperparameters={},
+        )
+
+    def build(self, in_channels: int, num_classes: int = 10,
+              image_size: int = 32) -> nn.Module:
+        return nn.MaxPool2d(2, stride=2)
+
+
+class BatchNormReLU(PrimitiveSpec):
+    """BatchNorm + ReLU. No conv. Useful for refining features."""
+    def __init__(self):
+        super().__init__(
+            name="bn_relu",
+            input_types=[TYPE_SPATIAL],
+            output_type=TYPE_SPATIAL,
+            hyperparameters={},
+        )
+
+    def build(self, in_channels: int, num_classes: int = 10,
+              image_size: int = 32) -> nn.Module:
+        return nn.Sequential(nn.BatchNorm2d(in_channels), nn.ReLU(inplace=True))
+
+
 class LinearHead(PrimitiveSpec):
     """Vector → class logits. Terminal node of the topology."""
     def __init__(self):
@@ -171,6 +201,8 @@ _register(ConvBNReLU())
 _register(DepthwiseSeparableConv())
 _register(SelfAttention())
 _register(GlobalAvgPool())
+_register(MaxPool2x())
+_register(BatchNormReLU())
 _register(LinearHead())
 _register(Identity())
 
