@@ -63,18 +63,27 @@ class ValueNetwork(nn.Module):
 
 
 class PolicyTrainer:
-    """Trains the policy network with REINFORCE + baseline."""
+    """Trains the policy network with REINFORCE + baseline + replay buffer."""
 
-    def __init__(self, lr: float = 1e-3):
+    def __init__(self, lr: float = 1e-3, buffer_size: int = 100):
         self.policy = PolicyNetwork()
         self.value = ValueNetwork()
         self.policy_opt = torch.optim.AdamW(self.policy.parameters(), lr=lr, weight_decay=1e-4)
         self.value_opt = torch.optim.AdamW(self.value.parameters(), lr=lr, weight_decay=1e-4)
-        self.transitions: List[dict] = []  # accumulated (features, action, reward)
+        self.transitions: List[dict] = []  # current episode
+        self.replay_buffer: List[dict] = []  # all past episodes
+        self.buffer_size = buffer_size
 
-    def select_op(self, graph: GrowthGraph) -> Tuple[int, str, list]:
-        """Select an operation using the policy. Returns (op_idx, op_name, features)."""
+    def select_op(self, graph: GrowthGraph, epsilon: float = 0.1) -> Tuple[int, str, list]:
+        """Select an operation using epsilon-greedy.
+
+        With probability epsilon, pick a random op (exploration).
+        Otherwise, sample from the policy distribution.
+        """
         features = graph_features(graph)
+        if np.random.random() < epsilon:
+            op_idx = np.random.randint(0, N_OPS)
+            return op_idx, OPS[op_idx], features
         op_idx, _ = self.policy.sample(features)
         return op_idx, OPS[op_idx], features
 
@@ -87,13 +96,21 @@ class PolicyTrainer:
         })
 
     def update(self) -> dict:
-        """Update policy and value networks from stored transitions."""
+        """Update policy and value networks from stored transitions + replay."""
         if not self.transitions:
             return {"policy_loss": 0.0, "value_loss": 0.0, "n_transitions": 0}
 
-        features = torch.tensor([t["features"] for t in self.transitions], dtype=torch.float32)
-        actions = torch.tensor([t["op_idx"] for t in self.transitions], dtype=torch.long)
-        rewards = torch.tensor([t["reward"] for t in self.transitions], dtype=torch.float32)
+        # Add current transitions to replay buffer
+        self.replay_buffer.extend(self.transitions)
+        if len(self.replay_buffer) > self.buffer_size:
+            self.replay_buffer = self.replay_buffer[-self.buffer_size:]
+
+        # Use all available transitions (current + replay)
+        all_transitions = self.replay_buffer
+
+        features = torch.tensor([t["features"] for t in all_transitions], dtype=torch.float32)
+        actions = torch.tensor([t["op_idx"] for t in all_transitions], dtype=torch.long)
+        rewards = torch.tensor([t["reward"] for t in all_transitions], dtype=torch.float32)
 
         # Value loss (MSE on predicted accuracy)
         predicted_values = self.value(features).squeeze(-1)
@@ -114,11 +131,11 @@ class PolicyTrainer:
         self.policy_opt.step()
         self.value_opt.step()
 
-        # Clear transitions
+        # Clear current transitions (keep replay buffer)
         self.transitions.clear()
 
         return {
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
-            "n_transitions": len(rewards),
+            "n_transitions": len(all_transitions),
         }
