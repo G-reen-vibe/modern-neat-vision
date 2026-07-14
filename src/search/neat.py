@@ -133,7 +133,12 @@ def crossover(parent_a: Genome, parent_b: Genome, rng: random.Random) -> Genome:
 def evaluate_individual(ind: Individual, config: DNeatConfig,
                         train_loader, val_loader, num_classes: int,
                         in_channels: int, image_size: int) -> None:
-    """Develop the genome, train the phenotype briefly, set ind.fitness."""
+    """Develop the genome, train the phenotype briefly, set ind.fitness.
+
+    Uses early-stopping: trains for 1 epoch, evaluates. If accuracy is below
+    a minimum threshold (e.g., 0.10 = random for 10 classes), stops early to
+    save compute on clearly bad candidates.
+    """
     t0 = time.time()
     try:
         phenotype = develop(ind.genome, config.dev_config, seed=0)
@@ -147,15 +152,36 @@ def evaluate_individual(ind: Individual, config: DNeatConfig,
         model = compile_phenotype(phenotype, in_channels=in_channels,
                                   num_classes=num_classes, image_size=image_size)
         ind.phenotype_node_count = len(phenotype.nodes)
-        # Train briefly
+        # Early-stop: train 1 epoch first
         trainer = Trainer(
             model=model, train_loader=train_loader, val_loader=val_loader,
             num_classes=num_classes, lr=1e-3, weight_decay=5e-4,
             warmup_epochs=1, total_epochs=config.inner_train_epochs,
             label_smoothing=0.1, grad_clip=1.0, device="cpu",
         )
-        result = trainer.fit(config.inner_train_epochs, logger=None, eval_every=1)
-        ind.val_acc = result["best_acc"]
+        if config.inner_train_epochs > 1:
+            # Train first epoch
+            train_stats = trainer.train_one_epoch()
+            val_stats = trainer.evaluate()
+            first_acc = val_stats["val_acc"]
+            # Early-stop if clearly bad (below random + 0.05)
+            if first_acc < 0.15:
+                ind.val_acc = first_acc
+                if config.stability_weight > 0:
+                    ind.stability = stability_score(ind.genome, config.dev_config)
+                ind.fitness = ind.val_acc - config.stability_weight * ind.stability
+                ind.train_time_s = time.time() - t0
+                return
+            # Continue training remaining epochs
+            remaining = config.inner_train_epochs - 1
+            if remaining > 0:
+                result = trainer.fit(remaining, logger=None, eval_every=1)
+                ind.val_acc = max(first_acc, result["best_acc"])
+            else:
+                ind.val_acc = first_acc
+        else:
+            result = trainer.fit(config.inner_train_epochs, logger=None, eval_every=1)
+            ind.val_acc = result["best_acc"]
         # Stability penalty
         if config.stability_weight > 0:
             ind.stability = stability_score(ind.genome, config.dev_config)
