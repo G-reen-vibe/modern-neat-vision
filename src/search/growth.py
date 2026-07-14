@@ -51,19 +51,18 @@ class GrowthGraph:
 
 
 def initial_graph() -> GrowthGraph:
-    """Create the minimal starting graph: input -> conv -> bn_relu -> pool -> head.
+    """Create the starting graph: input -> conv(64) -> bn_relu -> conv(64) -> pool -> head.
 
-    Slightly stronger than the bare minimum: 2 conv layers + BN to give the
-    search a reasonable starting point.
+    Wider initial graph (64 channels) to match Simple CNN's capacity.
     """
     g = GrowthGraph()
     g.nodes[0] = {"primitive": "identity", "hyperparams": {}, "position": (-1, 0)}
     g.nodes[1] = {"primitive": "conv_bn_relu",
-                  "hyperparams": {"out_channels": 32, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "hyperparams": {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
                   "position": (-0.5, 0)}
     g.nodes[2] = {"primitive": "bn_relu", "hyperparams": {}, "position": (0, 0)}
     g.nodes[3] = {"primitive": "conv_bn_relu",
-                  "hyperparams": {"out_channels": 32, "kernel_size": 3, "stride": 1, "groups": 1},
+                  "hyperparams": {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
                   "position": (0.5, 0)}
     g.nodes[4] = {"primitive": "global_avg_pool", "hyperparams": {}, "position": (1, 0)}
     g.nodes[5] = {"primitive": "linear_head", "hyperparams": {}, "position": (1.5, 0)}
