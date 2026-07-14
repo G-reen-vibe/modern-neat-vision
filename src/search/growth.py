@@ -79,6 +79,17 @@ def initial_graph() -> GrowthGraph:
     return g
 
 
+def _get_upstream_channels(g: GrowthGraph, nid: int) -> int:
+    """Get the channel count of the upstream conv node (for bn_relu/max_pool)."""
+    for (u, v) in g.edges:
+        if v == nid:
+            ch = g.nodes[u]["hyperparams"].get("out_channels", 0)
+            if ch > 0:
+                return ch
+            return _get_upstream_channels(g, u)
+    return 0
+
+
 def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGraph:
     """Apply a growth operation to a graph. Returns a new graph."""
     g = graph.clone()
@@ -177,10 +188,21 @@ def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGr
         g.edges = new_edges
 
     elif op == "add_skip" and len(spatial_nodes) >= 2:
-        # Add a skip connection between two spatial nodes (avoid cycles)
-        # Try a few times to find a non-cycling edge
+        # Add a skip connection between two spatial nodes with matching channels.
+        # Only connect nodes where the channel count matches to avoid shape issues.
+        # Try a few times to find a valid, non-cycling edge.
         for _ in range(10):
             a, b = rng.sample(spatial_nodes, 2)
+            # Check channel compatibility
+            ch_a = g.nodes[a]["hyperparams"].get("out_channels", 0)
+            ch_b = g.nodes[b]["hyperparams"].get("out_channels", 0)
+            # For bn_relu/max_pool, channels = input channels, so check upstream
+            if ch_a == 0:
+                ch_a = _get_upstream_channels(g, a)
+            if ch_b == 0:
+                ch_b = _get_upstream_channels(g, b)
+            if ch_a != ch_b:
+                continue
             # Direction: earlier position -> later position
             if g.nodes[a]["position"][0] > g.nodes[b]["position"][0]:
                 a, b = b, a
