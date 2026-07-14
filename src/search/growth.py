@@ -90,8 +90,12 @@ def _get_upstream_channels(g: GrowthGraph, nid: int) -> int:
     return 0
 
 
-def apply_operation(graph: GrowthGraph, op: str, rng: random.Random) -> GrowthGraph:
-    """Apply a growth operation to a graph. Returns a new graph."""
+def apply_operation(graph: GrowthGraph, op: str, rng: random.Random,
+                    max_params: int = 500000) -> GrowthGraph:
+    """Apply a growth operation to a graph. Returns a new graph.
+
+    If the operation would exceed max_params, it's skipped (returns original).
+    """
     g = graph.clone()
     spatial_nodes = [nid for nid, n in g.nodes.items()
                      if n["primitive"] not in ("identity", "linear_head", "global_avg_pool")]
