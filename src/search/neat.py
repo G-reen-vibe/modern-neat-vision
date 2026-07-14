@@ -49,6 +49,12 @@ class Individual:
     val_acc: float = 0.0
 
 
+def _tournament_select(population: List[Individual], k: int, rng: random.Random) -> Individual:
+    """Tournament selection: pick k random individuals, return the fittest."""
+    contestants = rng.sample(population, min(k, len(population)))
+    return max(contestants, key=lambda i: i.fitness)
+
+
 def mutate_genome(genome: Genome, config: DNeatConfig, rng: random.Random) -> Genome:
     """Apply mutations to a genome. Returns a mutated copy."""
     import copy
@@ -201,7 +207,7 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
                   f"best_nodes={max(nodes)} mean_nodes={sum(nodes)/len(nodes):.1f} "
                   f"gen_time={sum(times):.0f}s")
 
-        # Elites
+        # Elites (carried over unchanged)
         n_elite = max(1, int(config.elite_fraction * config.population_size))
         elites = population[:n_elite]
         # Reproduce
@@ -209,15 +215,14 @@ def run_dneat(config: DNeatConfig, train_loader, val_loader,
         next_id = max(i.id for i in population) + 1
         while len(new_pop) < config.population_size:
             if rng.random() < 0.3 and len(elites) >= 2:
-                # Crossover two elites
-                parent_a = rng.choice(elites)
-                parent_b = rng.choice([e for e in elites if e.id != parent_a.id] or elites)
+                # Crossover two tournament winners
+                parent_a = _tournament_select(population, 2, rng)
+                parent_b = _tournament_select(population, 2, rng)
                 child_genome = crossover(parent_a.genome, parent_b.genome, rng)
-                # Also mutate
                 child_genome = mutate_genome(child_genome, config, rng)
             else:
-                # Asexual mutation
-                parent = rng.choice(elites)
+                # Asexual mutation from tournament winner
+                parent = _tournament_select(population, 2, rng)
                 child_genome = mutate_genome(parent.genome, config, rng)
             child = Individual(id=next_id, genome=child_genome)
             new_pop.append(child)

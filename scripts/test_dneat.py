@@ -40,7 +40,7 @@ def main():
         population_size=3,
         generations=2,
         inner_train_epochs=2,
-        stability_weight=0.0,
+        stability_weight=0.5,
         train_subset_size=3000,
         val_subset_size=1000,
         batch_size=64,

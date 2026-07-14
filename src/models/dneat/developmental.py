@@ -403,15 +403,19 @@ def stability_score(genome: Genome, config: Optional[DevelopmentalConfig] = None
     for s in range(n_samples):
         p = develop(genome, config, seed=s)
         phenotypes.append(p)
-    # Pairwise distance: average fraction of differing nodes and edges
+    # Pairwise distance: compare both graph structure AND primitive assignments.
+    # Two phenotypes with the same node IDs but different primitives at those
+    # IDs are considered different.
     total_diff = 0.0
     pairs = 0
     for i in range(len(phenotypes)):
         for j in range(i+1, len(phenotypes)):
             p1, p2 = phenotypes[i], phenotypes[j]
-            n1 = set(p1.nodes.keys())
-            n2 = set(p2.nodes.keys())
+            # Node structure: compare (node_id, primitive_name) pairs
+            n1 = {(nid, n.primitive_name) for nid, n in p1.nodes.items()}
+            n2 = {(nid, n.primitive_name) for nid, n in p2.nodes.items()}
             node_diff = len(n1.symmetric_difference(n2)) / max(1, len(n1 | n2))
+            # Edge structure
             e1 = set(p1.edges)
             e2 = set(p2.edges)
             edge_diff = len(e1.symmetric_difference(e2)) / max(1, len(e1 | e2))
