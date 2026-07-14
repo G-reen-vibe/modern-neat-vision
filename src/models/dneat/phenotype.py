@@ -201,6 +201,27 @@ class DNeatPhenotype(nn.Module):
 
 def compile_phenotype(phenotype: Phenotype, in_channels: int = 3,
                       num_classes: int = 10, image_size: int = 32) -> nn.Module:
-    return DNeatPhenotype(phenotype, in_channels=in_channels,
-                          num_classes=num_classes, image_size=image_size)
+    """Compile a phenotype into a trainable torch.nn.Module.
+
+    Applies Kaiming initialization to all conv layers and Xavier init to
+    linear layers, matching the initialization used by hand-designed models
+    like Simple CNN. This is critical for fair comparison — PyTorch's default
+    uniform init is too small and causes slower convergence.
+    """
+    model = DNeatPhenotype(phenotype, in_channels=in_channels,
+                           num_classes=num_classes, image_size=image_size)
+    # Apply proper initialization
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+    return model
 
