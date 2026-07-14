@@ -54,7 +54,7 @@ def evaluate_graph(graph, train_loader, val_loader, num_classes, in_channels, im
 
 def policy_search(train_loader, val_loader, num_classes, in_channels, image_size,
                   n_episodes: int = 2, steps_per_episode: int = 4,
-                  epochs_per_eval: int = 2, candidates_per_step: int = 3,
+                  epochs_per_eval: int = 2, candidates_per_step: int = 2,
                   seed: int = 0, verbose: bool = True):
     """Run greedy complexification with a learned policy.
 
