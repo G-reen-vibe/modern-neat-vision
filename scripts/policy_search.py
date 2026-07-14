@@ -173,7 +173,7 @@ def main():
     t0 = time.time()
     best_graph, best_acc = policy_search(
         tl, vl, nc, spec.in_channels, spec.image_size,
-        n_episodes=2, steps_per_episode=4, epochs_per_eval=2, seed=0, verbose=True,
+        n_episodes=3, steps_per_episode=4, epochs_per_eval=2, seed=0, verbose=True,
     )
     print(f"\nSearch time: {time.time()-t0:.0f}s")
     print(f"Best accuracy during search: {best_acc:.4f} ({len(best_graph.nodes)} nodes)")
