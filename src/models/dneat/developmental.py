@@ -1,38 +1,32 @@
-"""Developmental program: genome → phenotype.
+"""Developmental program: genome → phenotype via a graph grammar.
 
-The developmental program is a graph grammar that grows the phenotype over
-a fixed number of developmental steps. At each step:
+Process:
+  1. Start with a single "stem cell" at position (0, 0).
+  2. At each developmental step, each existing cell queries the CPPN with
+     its (x, y, t) coordinates. The CPPN outputs:
+       - divide_prob: if > threshold, the cell divides into two daughter
+         cells (one stays, one moves to a neighboring empty slot).
+       - primitive_idx: which primitive from the library to instantiate.
+       - connect_strength: how strongly to connect to existing neighbors.
+  3. After all divisions, cells form connections based on connect_strength
+     and proximity (Manhattan distance <= connect_radius).
+  4. The final cell graph is the phenotype.
 
-  1. Each cell in the current phenotype queries the CPPN genome with its
-     spatial coordinates (x, y) and the current developmental step t.
-  2. The CPPN outputs:
-     - divide probability: should this cell split into two?
-     - differentiation: which primitive from the library to instantiate?
-     - connection strength: how strongly to connect to neighbors.
-  3. The grammar applies these decisions, growing the phenotype.
-
-The result is a typed DAG over the primitive library, which is then
-compiled into a torch.nn.Module by phenotype.py.
-
-This is a SCAFFOLD in Phase 2. The actual grammar and CPPN evaluation
-will be implemented in Phase 4.
-
-Key design decisions (to be revisited):
-  - Developmental grid: 4x4 (16 cells), 5 steps. Total phenotype size
-    will be ~16-64 nodes.
-  - Connection radius: cells connect to neighbors within Manhattan
-    distance 2.
-  - Stability regularizer: each developmental step is run twice with
-    Gaussian noise added to the CPPN's outputs; the Kullback-Leibler
-    divergence between the two resulting phenotypes is minimized.
-    This is the *research bet* of D-NEAT (see DECISION.md §1).
+To enforce a meaningful topology:
+  - The input cell is always Identity (a "stem" that just receives x).
+  - The output cell is always LinearHead (terminal classifier).
+  - Intermediate cells are differentiated based on CPPN output.
 """
 from __future__ import annotations
+import math
+import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+import numpy as np
 import networkx as nx
 
-from src.models.dneat.genome import Genome
+from src.models.dneat.genome import Genome, minimal_genome
+from src.models.dneat.cppn import evaluate_cppn
 from src.models.dneat.primitives import PRIMITIVES
 
 
@@ -82,34 +76,324 @@ class Phenotype:
         return True
 
 
-def develop(genome: Genome, grid_size: int = 4, steps: int = 5) -> Phenotype:
-    """Run the developmental program to produce a phenotype.
+@dataclass
+class Cell:
+    cell_id: int
+    position: Tuple[float, float]  # (x, y) in [-1, 1]^2
+    primitive_name: str
+    hyperparameters: dict
+    parent_id: Optional[int] = None
+    born_at_step: int = 0
 
-    SCAFFOLD: This is a stub. For Phase 2, we just return a fixed 3-node
-    phenotype (input → ConvBNReLU → GlobalAvgPool → LinearHead → output)
-    so the rest of the pipeline can be tested.
 
-    Phase 4 will implement the actual CPPN evaluation + graph grammar.
-    """
+@dataclass
+class DevelopmentalConfig:
+    grid_resolution: int = 4  # 4x4 grid of possible positions
+    max_steps: int = 4
+    divide_threshold: float = 0.5
+    connect_radius: float = 1.2  # in [-1, 1] coordinate space — large enough to span the grid
+    min_cells: int = 3
+    max_cells: int = 16
+    # Primitive vocabulary the CPPN can choose from (excluding input/output).
+    # Note: "identity" is excluded from daughter-cell choices because it produces
+    # useless pass-through nodes. Skip connections are formed by the proximity
+    # edge rule, not by instantiating identity primitives.
+    primitive_choices: List[str] = field(default_factory=lambda: [
+        "conv_bn_relu", "dw_sep_conv", "global_avg_pool",
+    ])
+    noise_sigma: float = 0.0  # for stability testing
+    # The output region: cells within this distance of (1, 0) get connected to
+    # the global_avg_pool output cell, ensuring all cells can reach the output.
+    output_attraction_radius: float = 1.5
+
+
+def _grid_positions(resolution: int) -> List[Tuple[float, float]]:
+    """Generate grid positions in [-1, 1]^2."""
+    if resolution == 1:
+        return [(0.0, 0.0)]
+    coords = np.linspace(-1, 1, resolution)
+    return [(float(x), float(y)) for y in coords for x in coords]
+
+
+def _softmax(logits: List[float]) -> List[float]:
+    if not logits:
+        return []
+    m = max(logits)
+    exps = [math.exp(l - m) for l in logits]
+    s = sum(exps)
+    return [e / s for e in exps]
+
+
+def develop(genome: Genome, config: Optional[DevelopmentalConfig] = None,
+            seed: Optional[int] = None) -> Phenotype:
+    """Run the developmental program to produce a phenotype."""
+    if config is None:
+        config = DevelopmentalConfig()
+    if seed is not None:
+        rng = random.Random(seed)
+    else:
+        rng = random
+
+    # Ensure genome has input_ids / output_ids
+    if not hasattr(genome, "input_ids"):
+        # Fallback: synthesize from node kinds
+        input_ids = [nid for nid, n in genome.nodes.items() if n.kind == "input"]
+        output_ids = [nid for nid, n in genome.nodes.items() if n.kind == "output"]
+        genome.input_ids = input_ids
+        genome.output_ids = output_ids
+
+    cells: List[Cell] = []
+    next_cell_id = 0
+
+    # Place input cell at position (-1, 0) — leftmost
+    cells.append(Cell(
+        cell_id=next_cell_id, position=(-1.0, 0.0),
+        primitive_name="identity", hyperparameters={},
+        parent_id=None, born_at_step=0,
+    ))
+    next_cell_id += 1
+
+    # Place a "seed" cell at (0, 0) that will be the first to develop
+    seed_cell = Cell(
+        cell_id=next_cell_id, position=(0.0, 0.0),
+        primitive_name="conv_bn_relu",
+        hyperparameters={"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1},
+        parent_id=0, born_at_step=0,
+    )
+    cells.append(seed_cell)
+    next_cell_id += 1
+
+    grid = _grid_positions(config.grid_resolution)
+    # Occupied positions
+    occupied = {c.position for c in cells}
+
+    # Developmental steps
+    for step in range(1, config.max_steps + 1):
+        t = step / config.max_steps  # normalize time to [0, 1]
+        new_cells: List[Cell] = []
+        for cell in list(cells):
+            if cell.primitive_name in ("identity", "linear_head"):
+                continue  # input/output cells don't divide
+            x, y = cell.position
+            # Query CPPN
+            outputs = evaluate_cppn(genome, x, y, t, genome.input_ids, genome.output_ids)
+            # Add noise for stability testing
+            if config.noise_sigma > 0:
+                outputs = [o + rng.gauss(0, config.noise_sigma) for o in outputs]
+            divide_prob = 1.0 / (1.0 + math.exp(-outputs[0]))  # sigmoid
+            # Differentiation: use both the CPPN diff output AND the cell's
+            # x-position (depth from input). Cells farther from input are more
+            # likely to be pooling/primitive-reducing, which matches the natural
+            # depth-wise structure of CNNs (early layers = feature extraction,
+            # late layers = pooling).
+            diff_val = outputs[1]
+            diff_norm = (math.tanh(diff_val) + 1) / 2  # [0, 1]
+            # Blend with position: x in [-1, 1], normalize to [0, 1]
+            x_norm = (x + 1) / 2
+            # Weighted combination: 50% CPPN, 50% position
+            choice_val = 0.5 * diff_norm + 0.5 * x_norm
+            n_choices = len(config.primitive_choices)
+            prim_idx = min(n_choices - 1, int(choice_val * n_choices))
+            prim_name = config.primitive_choices[prim_idx]
+
+            # Decide division
+            if (divide_prob > config.divide_threshold
+                    and len(cells) + len(new_cells) < config.max_cells):
+                # Find an empty neighboring position
+                candidates = []
+                for gx, gy in grid:
+                    if (gx, gy) in occupied:
+                        continue
+                    dist = abs(gx - x) + abs(gy - y)
+                    if dist <= 2.0 / config.grid_resolution * 2:  # neighbor
+                        candidates.append(((gx, gy), dist))
+                if candidates:
+                    candidates.sort(key=lambda c: c[1])
+                    new_pos = candidates[0][0]
+                    occupied.add(new_pos)
+                    # Differentiate
+                    hyperparams = _default_hyperparams(prim_name)
+                    daughter = Cell(
+                        cell_id=next_cell_id, position=new_pos,
+                        primitive_name=prim_name, hyperparameters=hyperparams,
+                        parent_id=cell.cell_id, born_at_step=step,
+                    )
+                    new_cells.append(daughter)
+                    next_cell_id += 1
+        cells.extend(new_cells)
+        if len(cells) >= config.max_cells:
+            break
+
+    # Place output cell at (1, 0) — rightmost
+    output_cell = Cell(
+        cell_id=next_cell_id, position=(1.0, 0.0),
+        primitive_name="global_avg_pool", hyperparameters={},
+        parent_id=None, born_at_step=config.max_steps,
+    )
+    cells.append(output_cell)
+    next_cell_id += 1
+
+    output_head = Cell(
+        cell_id=next_cell_id, position=(1.5, 0.0),
+        primitive_name="linear_head", hyperparameters={},
+        parent_id=output_cell.cell_id, born_at_step=config.max_steps,
+    )
+    cells.append(output_head)
+
+    # Build edges: connect cells based on proximity and parent relationships
+    edges: List[Tuple[int, int]] = []
+    # Parent-child edges (developmental lineage)
+    for c in cells:
+        if c.parent_id is not None:
+            edges.append((c.parent_id, c.cell_id))
+    # Proximity-based edges (within connect_radius, not already connected)
+    cell_by_id = {c.cell_id: c for c in cells}
+    existing = set(edges)
+    for i, c1 in enumerate(cells):
+        for c2 in cells[i+1:]:
+            if (c1.cell_id, c2.cell_id) in existing or (c2.cell_id, c1.cell_id) in existing:
+                continue
+            # Don't let identity or linear_head form spurious edges
+            if c2.primitive_name == "identity":
+                continue
+            if c1.primitive_name == "linear_head":
+                continue
+            dist = math.sqrt((c1.position[0]-c2.position[0])**2 + (c1.position[1]-c2.position[1])**2)
+            if dist <= config.connect_radius:
+                # Direction: leftmost → rightmost (by x coord)
+                if c1.position[0] <= c2.position[0]:
+                    edges.append((c1.cell_id, c2.cell_id))
+                else:
+                    edges.append((c2.cell_id, c1.cell_id))
+
+    # Ensure the output cell (global_avg_pool) connects to cells near it.
+    # This guarantees the phenotype has a path from input to output.
+    output_pool_id = output_cell.cell_id
+    existing = set(edges)
+    for c in cells:
+        if c.cell_id in (output_pool_id, output_head.cell_id, cells[0].cell_id):
+            continue
+        if c.primitive_name in ("identity", "linear_head"):
+            continue
+        if (c.cell_id, output_pool_id) in existing or (output_pool_id, c.cell_id) in existing:
+            continue
+        dist = math.sqrt((c.position[0]-output_cell.position[0])**2 + (c.position[1]-output_cell.position[1])**2)
+        if dist <= config.output_attraction_radius:
+            edges.append((c.cell_id, output_pool_id))
+
+    # Build the phenotype
     p = Phenotype()
+    for c in cells:
+        p.nodes[c.cell_id] = PhenotypeNode(
+            node_id=c.cell_id,
+            primitive_name=c.primitive_name,
+            hyperparameters=c.hyperparameters,
+            position=c.position,
+        )
+    p.edges = edges
+    p.input_node_id = cells[0].cell_id  # identity
+    p.output_node_id = output_head.cell_id  # linear_head
+
+    # Break cycles: greedily remove edges that create cycles, in reverse
+    # order of edge weight (proximity-based edges have lower priority than
+    # parent-child edges, since they were added later).
+    p = _break_cycles(p)
+    # Prune: keep only nodes on some path from input to output.
+    # Disconnected cells "die off" — a biologically motivated cleanup.
+    p = _prune_to_io_paths(p)
+    if not p.nodes or p.input_node_id not in p.nodes or p.output_node_id not in p.nodes:
+        return _fallback_phenotype()
+    if not p.is_valid():
+        return _fallback_phenotype()
+    return p
+
+
+def _break_cycles(p: Phenotype) -> Phenotype:
+    """Greedily remove edges that create cycles. Preserves earlier edges."""
+    import networkx as nx
+    kept_edges = []
+    g = nx.DiGraph()
+    for nid in p.nodes:
+        g.add_node(nid)
+    for (u, v) in p.edges:
+        g.add_edge(u, v)
+        if not nx.is_directed_acyclic_graph(g):
+            g.remove_edge(u, v)
+        else:
+            kept_edges.append((u, v))
+    p.edges = kept_edges
+    return p
+
+
+def _prune_to_io_paths(p: Phenotype) -> Phenotype:
+    """Keep only nodes that lie on some path from input to output."""
+    import networkx as nx
+    g = p.to_networkx()
+    if p.input_node_id not in g or p.output_node_id not in g:
+        return p
+    # Compute reachable from input, and ancestors of output
+    reachable_from_input = nx.descendants(g, p.input_node_id) | {p.input_node_id}
+    can_reach_output = nx.ancestors(g, p.output_node_id) | {p.output_node_id}
+    on_path = reachable_from_input & can_reach_output
+    # Filter
+    new = Phenotype()
+    new.input_node_id = p.input_node_id
+    new.output_node_id = p.output_node_id
+    for nid, node in p.nodes.items():
+        if nid in on_path:
+            new.nodes[nid] = node
+    new.edges = [(u, v) for (u, v) in p.edges if u in on_path and v in on_path]
+    return new
+
+
+def _default_hyperparams(name: str) -> dict:
+    if name == "conv_bn_relu":
+        return {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1}
+    if name == "dw_sep_conv":
+        return {"out_channels": 64, "stride": 1}
+    return {}
+
+
+def _fallback_phenotype() -> Phenotype:
+    """Minimal valid phenotype: input → conv → pool → head → output."""
+    p = Phenotype()
+    p.nodes[0] = PhenotypeNode(0, "identity", {}, (-1, 0))
+    p.nodes[1] = PhenotypeNode(1, "conv_bn_relu", {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1}, (0, 0))
+    p.nodes[2] = PhenotypeNode(2, "global_avg_pool", {}, (1, 0))
+    p.nodes[3] = PhenotypeNode(3, "linear_head", {}, (2, 0))
     p.input_node_id = 0
-    p.nodes[0] = PhenotypeNode(0, "identity", {}, (0, 0))
-    p.nodes[1] = PhenotypeNode(1, "conv_bn_relu", {"out_channels": 64, "kernel_size": 3, "stride": 1, "groups": 1}, (1, 0))
-    p.nodes[2] = PhenotypeNode(2, "global_avg_pool", {}, (2, 0))
-    p.nodes[3] = PhenotypeNode(3, "linear_head", {}, (3, 0))
     p.output_node_id = 3
     p.edges = [(0, 1), (1, 2), (2, 3)]
     return p
 
 
-def stability_score(genome: Genome, grid_size: int = 4, steps: int = 5,
-                    noise_sigma: float = 0.1, n_samples: int = 2) -> float:
-    """Compute the stability score of a genome.
+def stability_score(genome: Genome, config: Optional[DevelopmentalConfig] = None,
+                    n_samples: int = 3) -> float:
+    """Compute stability: average pairwise phenotype distance under noise.
 
-    Runs the developmental program n_samples times with Gaussian noise
-    added to the CPPN's outputs, and returns the average pairwise
-    distance between resulting phenotypes (lower = more stable).
-
-    SCAFFOLD: returns 0.0 in Phase 2. Will be implemented in Phase 4.
+    Lower = more stable. Returns the fraction of (node, edge) differences
+    between phenotype pairs developed with different noise seeds.
     """
-    return 0.0
+    if config is None:
+        config = DevelopmentalConfig()
+    if config.noise_sigma == 0:
+        config = DevelopmentalConfig(**{**config.__dict__, "noise_sigma": 0.1})
+    phenotypes = []
+    for s in range(n_samples):
+        p = develop(genome, config, seed=s)
+        phenotypes.append(p)
+    # Pairwise distance: average fraction of differing nodes and edges
+    total_diff = 0.0
+    pairs = 0
+    for i in range(len(phenotypes)):
+        for j in range(i+1, len(phenotypes)):
+            p1, p2 = phenotypes[i], phenotypes[j]
+            n1 = set(p1.nodes.keys())
+            n2 = set(p2.nodes.keys())
+            node_diff = len(n1.symmetric_difference(n2)) / max(1, len(n1 | n2))
+            e1 = set(p1.edges)
+            e2 = set(p2.edges)
+            edge_diff = len(e1.symmetric_difference(e2)) / max(1, len(e1 | e2))
+            total_diff += 0.5 * (node_diff + edge_diff)
+            pairs += 1
+    return total_diff / max(1, pairs)

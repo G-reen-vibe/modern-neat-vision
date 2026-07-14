@@ -105,19 +105,72 @@ class Genome:
 
 
 def minimal_genome() -> Genome:
-    """Create a minimal CPPN genome: 3 inputs (x, y, t), 1 hidden, 3 outputs
+    """Create a minimal CPPN genome: 4 inputs (x, y, t, bias), 1 hidden, 3 outputs
     (divide, differentiate, connect).
+
+    The genome is initialized with weights that encourage growth: the bias
+    input has a positive weight to the hidden node, and the hidden-to-divide
+    edge has a positive weight. This ensures the developmental program
+    actually produces phenotypes with structure (otherwise divide_prob stays
+    near 0.5 and division rarely triggers).
+
+    Returns a Genome with input_ids and output_ids attributes set.
     """
     g = Genome()
     x = g.add_input("x")
     y = g.add_input("y")
     t = g.add_input("t")
+    bias = g.add_input("bias")
     h = g.add_hidden("tanh")
     o_divide = g.add_output("divide")
     o_diff = g.add_output("differentiate")
     o_conn = g.add_output("connect")
-    for inp in (x, y, t):
-        g.connect(inp, h)
-    for out in (o_divide, o_diff, o_conn):
-        g.connect(h, out)
+    # Inputs -> hidden (with growth bias)
+    g.connect(x, h, weight=0.5)
+    g.connect(y, h, weight=0.5)
+    g.connect(t, h, weight=1.0)  # time matters for development
+    g.connect(bias, h, weight=1.5)  # positive bias encourages growth
+    # Hidden -> outputs
+    g.connect(h, o_divide, weight=2.0)  # positive -> divide_prob > 0.5
+    g.connect(h, o_diff, weight=1.0)
+    g.connect(h, o_conn, weight=1.0)
+    g.input_ids = [x, y, t, bias]
+    g.output_ids = [o_divide, o_diff, o_conn]
+    return g
+
+
+def random_genome(seed: int | None = None) -> Genome:
+    """Create a random CPPN genome with 1-3 hidden nodes and random weights."""
+    import random as _r
+    rng = _r.Random(seed)
+    g = Genome()
+    x = g.add_input("x")
+    y = g.add_input("y")
+    t = g.add_input("t")
+    bias = g.add_input("bias")
+    n_hidden = rng.randint(1, 3)
+    hidden_ids = []
+    for _ in range(n_hidden):
+        act = rng.choice(["tanh", "sigmoid", "sin", "gauss", "relu"])
+        hidden_ids.append(g.add_hidden(act))
+    o_divide = g.add_output("divide")
+    o_diff = g.add_output("differentiate")
+    o_conn = g.add_output("connect")
+    # Connect inputs to all hidden nodes
+    for inp in (x, y, t, bias):
+        for h in hidden_ids:
+            if rng.random() < 0.8:
+                g.connect(inp, h, weight=rng.gauss(0, 1.0))
+    # Connect hidden to outputs
+    for h in hidden_ids:
+        for out in (o_divide, o_diff, o_conn):
+            if rng.random() < 0.8:
+                g.connect(h, out, weight=rng.gauss(0, 1.0))
+    # Also allow direct input -> output connections
+    for inp in (x, y, t, bias):
+        for out in (o_divide, o_diff, o_conn):
+            if rng.random() < 0.3:
+                g.connect(inp, out, weight=rng.gauss(0, 0.5))
+    g.input_ids = [x, y, t, bias]
+    g.output_ids = [o_divide, o_diff, o_conn]
     return g

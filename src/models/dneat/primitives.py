@@ -125,7 +125,7 @@ class GlobalAvgPool(PrimitiveSpec):
 
     def build(self, in_channels: int, num_classes: int = 10,
               image_size: int = 32) -> nn.Module:
-        return nn.AdaptiveAvgPool2d(1)
+        return nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(1))
 
 
 class LinearHead(PrimitiveSpec):
